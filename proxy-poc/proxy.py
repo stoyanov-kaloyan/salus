@@ -4,8 +4,16 @@ from PIL import Image
 import io
 import cv2
 import numpy as np
+import os
+
+from recognizers import DeepFakeRecognizer
 
 class ImageBlurAddon:
+    def __init__(self):
+        device = int(os.getenv("DEEPFAKE_PIPELINE_DEVICE", "0"))
+        threshold = float(os.getenv("DEEPFAKE_THRESHOLD", "0.5"))
+        self.recognizer = DeepFakeRecognizer(device=device, threshold=threshold)
+
     def request(self, flow: mitmproxy.http.HTTPFlow):
         # Log all requests to verify traffic is flowing
         ctx.log.info(f"Request: {flow.request.url}")
@@ -27,24 +35,33 @@ class ImageBlurAddon:
             
             # Load with PIL
             img = Image.open(io.BytesIO(image_data))
-            img_array = np.array(img)
+            image_for_recognizer = img.convert("RGB")
             
-            # --- Your detection logic here ---
-            if self.should_blur(img_array):
-                ctx.log.info(f"Blurring image from {flow.request.url}")
-                blurred = cv2.GaussianBlur(img_array, (51, 51), 0)
-                img = Image.fromarray(blurred)
+            if not self.should_blur(image_for_recognizer):
+                return
+
+            ctx.log.info(f"Blurring image from {flow.request.url}")
+            blurred = cv2.GaussianBlur(np.array(image_for_recognizer), (51, 51), 0)
+            blurred_img = Image.fromarray(blurred)
             
             # Write back into the response
             output = io.BytesIO()
-            img.save(output, format=img.format or "JPEG")
+            blurred_img.save(output, format=img.format or "JPEG")
             flow.response.content = output.getvalue()
             
         except Exception as e:
             ctx.log.warn(f"Image processing failed: {e}")
     
-    def should_blur(self, img_array):
-        # Placeholder — plug in any model here
-        return True
+    def should_blur(self, image: Image.Image) -> bool:
+        try:
+            decision = self.recognizer.evaluate(image)
+            ctx.log.info(
+                f"Recognizer decision: label={decision.label}, score={decision.score:.4f}, "
+                f"threshold={self.recognizer.threshold:.2f}, should_blur={decision.should_change}"
+            )
+            return decision.should_change
+        except Exception as e:
+            ctx.log.warn(f"Recognizer failed: {e}")
+            return False
 
 addons = [ImageBlurAddon()]
