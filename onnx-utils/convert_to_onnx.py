@@ -2,6 +2,8 @@
 Convert prithivMLmods/Deep-Fake-Detector-v2-Model to ONNX format
 Requirements:
     pip install transformers torch optimum[exporters] onnx onnxruntime pillow
+    python convert_to_onnx.py --export --model-dir deepfake_detector_onnx
+
 """
 
 import os
