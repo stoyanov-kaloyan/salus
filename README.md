@@ -8,6 +8,12 @@
  mitmdump -s proxy.py --listen-host 0.0.0.0 --listen-port 8080
 ```
 
+## Run the FastAPI server
+
+```
+uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
 ### Phone setup
 
 1. Wi-Fi settings > connect to wifi > Configure Proxy > Manual
