@@ -1,4 +1,7 @@
 import { Link } from "react-router-dom";
+import { useMemo } from "react";
+import { format, parseISO, formatDistanceToNow } from "date-fns";
+import { useSummary, useDaily, useEvents } from "@/hooks/useStats";
 import { Separator } from "@/components/ui/separator";
 import {
     ChartContainer,
@@ -25,109 +28,105 @@ const today = new Date().toLocaleDateString("en-US", {
     day: "numeric",
 });
 
-// Mock data
-const weeklyData = [
-    { day: "Mon", threats: 142 },
-    { day: "Tue", threats: 189 },
-    { day: "Wed", threats: 164 },
-    { day: "Thu", threats: 221 },
-    { day: "Fri", threats: 198 },
-    { day: "Sat", threats: 87 },
-    { day: "Sun", threats: 63 },
-];
-
-const categoryData = [
-    { category: "NSFW", count: 487 },
-    { category: "Deepfake", count: 156 },
-    { category: "Malicious", count: 321 },
-];
-
-const pieData = [
-    { name: "Blocked", value: 964 },
-    { name: "Flagged", value: 89 },
-    { name: "Passed", value: 12847 },
-];
-
-const PIE_COLORS = [
-    "hsl(205, 86%, 76%)",
-    "hsl(220, 20%, 12%)",
-    "hsl(40, 10%, 90%)",
-];
-
-const threatFeed = [
-    {
-        id: 1,
-        type: "NSFW",
-        domain: "cdn.suspect-img.net",
-        time: "2 min ago",
-        confidence: 98.4,
-    },
-    {
-        id: 2,
-        type: "Malicious",
-        domain: "login-verify.phishbank.ru",
-        time: "5 min ago",
-        confidence: 99.1,
-    },
-    {
-        id: 3,
-        type: "Deepfake",
-        domain: "media.synth-face.io",
-        time: "8 min ago",
-        confidence: 94.7,
-    },
-    {
-        id: 4,
-        type: "NSFW",
-        domain: "img-host.adultcdn.com",
-        time: "12 min ago",
-        confidence: 97.2,
-    },
-    {
-        id: 5,
-        type: "Malicious",
-        domain: "update.win-security.xyz",
-        time: "15 min ago",
-        confidence: 99.8,
-    },
-    {
-        id: 6,
-        type: "Deepfake",
-        domain: "video.ai-clone.net",
-        time: "21 min ago",
-        confidence: 91.3,
-    },
-    {
-        id: 7,
-        type: "Malicious",
-        domain: "api.crypto-drain.io",
-        time: "28 min ago",
-        confidence: 98.9,
-    },
-    {
-        id: 8,
-        type: "NSFW",
-        domain: "stream.explicit-live.com",
-        time: "34 min ago",
-        confidence: 96.1,
-    },
-];
+const PIE_COLORS = ["hsl(205, 86%, 76%)", "hsl(40, 10%, 90%)"];
 
 const chartConfig = {
-    threats: {
-        label: "Threats",
-        color: "hsl(205, 86%, 76%)",
-    },
-    count: {
-        label: "Count",
-        color: "hsl(205, 86%, 76%)",
-    },
+    threats: { label: "Threats", color: "hsl(205, 86%, 76%)" },
+    count: { label: "Count", color: "hsl(205, 86%, 76%)" },
 };
 
 const Dashboard = () => {
+    const { data: summary } = useSummary();
+    const { data: dailyStats } = useDaily({ days: 7 });
+    const { data: recentEvents } = useEvents({ flagged_only: true, limit: 8 });
+
+    const totalScans = useMemo(
+        () => (summary ?? []).reduce((s, r) => s + r.total_scans, 0),
+        [summary],
+    );
+    const totalFlagged = useMemo(
+        () => (summary ?? []).reduce((s, r) => s + r.flagged_count, 0),
+        [summary],
+    );
+    const blockRate =
+        totalScans > 0
+            ? `${((totalFlagged / totalScans) * 100).toFixed(1)}%`
+            : "—";
+    const avgConfidence = useMemo(() => {
+        const valid = (summary ?? []).filter(
+            (r) => r.avg_flagged_score != null,
+        );
+        if (!valid.length) return "—";
+        const avg =
+            valid.reduce((s, r) => s + (r.avg_flagged_score ?? 0), 0) /
+            valid.length;
+        return `${(avg * 100).toFixed(1)}%`;
+    }, [summary]);
+    const activeFilters = (summary ?? []).length;
+    const lastUpdated = useMemo(() => {
+        const dates = (summary ?? [])
+            .filter((r) => r.last_scan_at)
+            .map((r) => r.last_scan_at!);
+        if (!dates.length) return "just now";
+        return formatDistanceToNow(parseISO(dates.sort().at(-1)!), {
+            addSuffix: true,
+        });
+    }, [summary]);
+
+    const weeklyData = useMemo(() => {
+        if (!dailyStats?.length) return [];
+        const byDay = new Map<string, number>();
+        for (const row of dailyStats) {
+            byDay.set(row.day, (byDay.get(row.day) ?? 0) + row.flagged_count);
+        }
+        return Array.from(byDay.entries())
+            .sort(([a], [b]) => a.localeCompare(b))
+            .slice(-7)
+            .map(([day, threats]) => ({
+                day: format(parseISO(day), "EEE"),
+                threats,
+            }));
+    }, [dailyStats]);
+
+    const categoryData = useMemo(
+        () =>
+            (summary ?? []).map((r) => ({
+                category:
+                    r.recognizer.charAt(0).toUpperCase() +
+                    r.recognizer.slice(1),
+                count: r.total_scans,
+            })),
+        [summary],
+    );
+
+    const pieData = useMemo(() => {
+        if (!summary?.length) return [];
+        return [
+            { name: "Flagged", value: totalFlagged },
+            { name: "Passed", value: totalScans - totalFlagged },
+        ];
+    }, [summary, totalFlagged, totalScans]);
+
+    const threatFeed = useMemo(
+        () =>
+            (recentEvents ?? []).map((e, i) => ({
+                id: i,
+                type:
+                    e.recognizer.charAt(0).toUpperCase() +
+                    e.recognizer.slice(1),
+                domain: e.image_hash
+                    ? `sha256:${e.image_hash.slice(0, 16)}`
+                    : e.endpoint,
+                time: formatDistanceToNow(parseISO(e.created_at), {
+                    addSuffix: true,
+                }),
+                confidence: Math.round(e.score * 1000) / 10,
+            })),
+        [recentEvents],
+    );
+
     return (
         <div className="min-h-screen bg-background text-foreground">
-            {/* Masthead */}
             <header className="border-b">
                 <div className="container max-w-7xl mx-auto px-6 py-4">
                     <div className="flex items-center justify-between">
@@ -159,72 +158,83 @@ const Dashboard = () => {
                 </div>
             </header>
 
-            {/* Dashboard Content */}
             <main className="container max-w-7xl mx-auto px-6 py-8">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-border">
-                    {/* Left Column — Stats */}
                     <div className="lg:col-span-3 lg:pr-8 pb-8 lg:pb-0">
                         <h2 className="font-mono text-xs uppercase tracking-wider text-muted-foreground mb-6">
                             Today's Figures
                         </h2>
                         <div className="space-y-6">
-                            <StatBlock value="964" label="Threats Blocked" />
                             <StatBlock
-                                value="99.2%"
-                                label="Detection Accuracy"
+                                value={totalFlagged.toLocaleString()}
+                                label="Threats Detected"
                             />
-                            <StatBlock value="3" label="Active Filters" />
-                            <StatBlock value="14ms" label="Avg. Response" />
-                            <StatBlock value="13,900" label="Total Requests" />
-                            <StatBlock value="6.9%" label="Block Rate" />
+                            <StatBlock
+                                value={avgConfidence}
+                                label="Avg. Confidence"
+                            />
+                            <StatBlock
+                                value={
+                                    activeFilters ? String(activeFilters) : "—"
+                                }
+                                label="Active Recognizers"
+                            />
+                            <StatBlock
+                                value={totalScans.toLocaleString()}
+                                label="Total Scans"
+                            />
+                            <StatBlock value={blockRate} label="Flag Rate" />
                         </div>
                     </div>
 
-                    {/* Center Column — Live Feed */}
                     <div className="lg:col-span-5 lg:px-8 py-8 lg:py-0">
                         <h2 className="font-mono text-xs uppercase tracking-wider text-muted-foreground mb-6">
                             Live Threat Feed
                         </h2>
                         <div className="space-y-0 divide-y divide-border">
-                            {threatFeed.map((t) => (
-                                <div key={t.id} className="py-4 first:pt-0">
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span
-                                                    className={`font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 border ${
-                                                        t.type === "NSFW"
-                                                            ? "bg-primary/20 border-primary"
-                                                            : t.type ===
-                                                                "Malicious"
-                                                              ? "bg-destructive/10 border-destructive"
-                                                              : "border-foreground"
-                                                    }`}>
-                                                    {t.type}
-                                                </span>
-                                                <span className="font-mono text-[10px] text-muted-foreground">
-                                                    {t.time}
-                                                </span>
+                            {threatFeed.length === 0 ? (
+                                <p className="font-mono text-xs text-muted-foreground">
+                                    No flagged events yet.
+                                </p>
+                            ) : (
+                                threatFeed.map((t) => (
+                                    <div key={t.id} className="py-4 first:pt-0">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span
+                                                        className={`font-mono text-[10px] uppercase tracking-wider px-1.5 py-0.5 border ${
+                                                            t.type === "NSFW"
+                                                                ? "bg-primary/20 border-primary"
+                                                                : t.type ===
+                                                                    "Malicious"
+                                                                  ? "bg-destructive/10 border-destructive"
+                                                                  : "border-foreground"
+                                                        }`}>
+                                                        {t.type}
+                                                    </span>
+                                                    <span className="font-mono text-[10px] text-muted-foreground">
+                                                        {t.time}
+                                                    </span>
+                                                </div>
+                                                <p className="font-serif text-lg leading-tight truncate">
+                                                    {t.domain}
+                                                </p>
                                             </div>
-                                            <p className="font-serif text-lg leading-tight truncate">
-                                                {t.domain}
-                                            </p>
+                                            <span className="font-mono text-xs text-muted-foreground whitespace-nowrap mt-1">
+                                                {t.confidence}%
+                                            </span>
                                         </div>
-                                        <span className="font-mono text-xs text-muted-foreground whitespace-nowrap mt-1">
-                                            {t.confidence}%
-                                        </span>
                                     </div>
-                                </div>
-                            ))}
+                                ))
+                            )}
                         </div>
                     </div>
 
-                    {/* Right Column — Charts */}
                     <div className="lg:col-span-4 lg:pl-8 pt-8 lg:pt-0">
                         <h2 className="font-mono text-xs uppercase tracking-wider text-muted-foreground mb-6">
                             Analytics
                         </h2>
-
                         {/* Line Chart — Weekly Threats */}
                         <div className="mb-8">
                             <h3 className="font-serif text-xl mb-4">
@@ -392,14 +402,13 @@ const Dashboard = () => {
                 </div>
             </main>
 
-            {/* Footer */}
             <footer className="border-t py-6 mt-8">
                 <div className="container max-w-7xl mx-auto px-6 flex items-center justify-between">
                     <span className="font-mono text-xs text-muted-foreground">
                         © {new Date().getFullYear()} Salus
                     </span>
                     <span className="font-mono text-xs text-muted-foreground">
-                        Last updated: just now
+                        Last updated: {lastUpdated}
                     </span>
                 </div>
             </footer>
