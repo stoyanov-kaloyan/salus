@@ -4,14 +4,23 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from pydantic import BaseModel
 from PIL import Image
+import os
 
-from recognizers import DeepFakeRecognizer, NsfwRecognizer
+from recognizers import NsfwRecognizer, create_deepfake_recognizer
 
 models = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    models['deepfake'] = DeepFakeRecognizer()
+    backend = os.getenv("DEEPFAKE_MODEL_BACKEND", "auto")
+    checkpoint_path = os.getenv("DEEPFAKE_PT_CHECKPOINT_PATH")
+    threshold_raw = os.getenv("DEEPFAKE_THRESHOLD")
+    threshold = float(threshold_raw) if threshold_raw is not None else None
+    models['deepfake'] = create_deepfake_recognizer(
+        backend=backend,
+        checkpoint_path=checkpoint_path,
+        threshold=threshold,
+    )
     models['nsfw'] = NsfwRecognizer()
     yield
     models.clear()

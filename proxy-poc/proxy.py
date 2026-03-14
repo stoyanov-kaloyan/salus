@@ -6,13 +6,20 @@ import cv2
 import numpy as np
 import os
 
-from recognizers import DeepFakeRecognizer
+from recognizers import create_deepfake_recognizer
 
 class ImageBlurAddon:
     def __init__(self):
         device = int(os.getenv("DEEPFAKE_PIPELINE_DEVICE", "0"))
         threshold = float(os.getenv("DEEPFAKE_THRESHOLD", "0.5"))
-        self.recognizer = DeepFakeRecognizer(device=device, threshold=threshold)
+        backend = os.getenv("DEEPFAKE_MODEL_BACKEND", "auto")
+        checkpoint_path = os.getenv("DEEPFAKE_PT_CHECKPOINT_PATH")
+        self.recognizer = create_deepfake_recognizer(
+            backend=backend,
+            checkpoint_path=checkpoint_path,
+            device=device,
+            threshold=threshold,
+        )
 
     def request(self, flow: mitmproxy.http.HTTPFlow):
         # Log all requests to verify traffic is flowing

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
@@ -14,11 +15,15 @@ from deterministic_analysis import DEFAULT_ANALYSIS_PROFILE, StaticRiskEvaluator
 
 DEFAULT_DEEPFAKE_MODEL = "prithivMLmods/Deep-Fake-Detector-v2-Model"
 DEFAULT_NSFW_MODEL = "Falconsai/nsfw_image_detection"
+DEFAULT_PT_DEEPFAKE_CHECKPOINT = "deepfake_resnet18_best.pt"
 DEFAULT_DETERMINISTIC_WEIGHT = 0.20
 DEFAULT_NEURAL_PRIORITY_WEIGHT = 0.90
 DEFAULT_NEURAL_CONFLICT_THRESHOLD = 0.25
 DEFAULT_NEURAL_OVERRIDE_THRESHOLD = 0.85
 DEFAULT_NEURAL_OVERRIDE_WEIGHT = 0.95
+DEFAULT_PT_IMAGE_SIZE = 224
+DEFAULT_PT_NORMALIZE_MEAN = (0.485, 0.456, 0.406)
+DEFAULT_PT_NORMALIZE_STD = (0.229, 0.224, 0.225)
 
 DEFAULT_NEURAL_VARIANT_WEIGHTS: dict[str, float] = {
     "original": 0.55,
@@ -323,6 +328,176 @@ class DeepFakeRecognizer(_BasePipelineRecognizer):
             score=float(fused_score),
             predictions=predictions,
         )
+
+
+class PytorchDeepFakeRecognizer:
+    def __init__(
+        self,
+        checkpoint_path: str | os.PathLike[str] | None = None,
+        device: int = 0,
+        target_label: str = "Deepfake",
+        threshold: float | None = None,
+    ) -> None:
+        self.device = device
+        self.target_label = target_label
+        self._checkpoint_path = Path(checkpoint_path) if checkpoint_path else _default_pt_checkpoint_path()
+        self.model_name = str(self._checkpoint_path)
+
+        self._torch = None
+        self._model = None
+        self._preprocess = None
+        self._torch_device = None
+
+        self.image_size = DEFAULT_PT_IMAGE_SIZE
+        self.normalization_mean = list(DEFAULT_PT_NORMALIZE_MEAN)
+        self.normalization_std = list(DEFAULT_PT_NORMALIZE_STD)
+        self.threshold = float(threshold) if threshold is not None else 0.5
+        self._load_checkpoint(override_threshold=threshold)
+
+    def _load_checkpoint(self, override_threshold: float | None) -> None:
+        try:
+            import torch
+            import torch.nn as nn
+            from torchvision import models as tv_models
+            from torchvision import transforms as tv_transforms
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "PyTorch checkpoint backend requires torch and torchvision to be installed."
+            ) from exc
+
+        if not self._checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint file was not found: {self._checkpoint_path}")
+
+        self._torch_device = (
+            torch.device(f"cuda:{self.device}")
+            if self.device >= 0 and torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+
+        payload = torch.load(str(self._checkpoint_path), map_location="cpu")
+
+        metadata: dict[str, Any] = {}
+        if isinstance(payload, dict) and isinstance(payload.get("state_dict"), dict):
+            metadata = payload
+            state_dict = dict(payload["state_dict"])
+        elif isinstance(payload, dict):
+            state_dict = dict(payload)
+        else:
+            raise TypeError("Unsupported checkpoint format. Expected a state_dict mapping.")
+
+        state_dict = {
+            str(key).removeprefix("module."): value
+            for key, value in state_dict.items()
+        }
+
+        if "image_size" in metadata:
+            try:
+                self.image_size = int(metadata["image_size"])
+            except (TypeError, ValueError):
+                self.image_size = DEFAULT_PT_IMAGE_SIZE
+
+        normalization = metadata.get("normalization")
+        if isinstance(normalization, dict):
+            mean = normalization.get("mean")
+            std = normalization.get("std")
+            if isinstance(mean, (list, tuple)) and isinstance(std, (list, tuple)) and len(mean) == 3 and len(std) == 3:
+                self.normalization_mean = [float(v) for v in mean]
+                self.normalization_std = [float(v) for v in std]
+
+        if override_threshold is None:
+            saved_threshold = metadata.get("threshold")
+            if saved_threshold is not None:
+                try:
+                    self.threshold = float(saved_threshold)
+                except (TypeError, ValueError):
+                    self.threshold = 0.5
+
+        model = tv_models.resnet18(weights=None)
+        model.fc = nn.Linear(model.fc.in_features, 1)
+        model.load_state_dict(state_dict)
+        model = model.to(self._torch_device)
+        model.eval()
+
+        self._preprocess = tv_transforms.Compose(
+            [
+                tv_transforms.Resize((self.image_size, self.image_size)),
+                tv_transforms.ToTensor(),
+                tv_transforms.Normalize(mean=self.normalization_mean, std=self.normalization_std),
+            ]
+        )
+
+        self._torch = torch
+        self._model = model
+
+    def evaluate(self, image: Image.Image) -> RecognitionDecision:
+        if self._torch is None or self._model is None or self._preprocess is None or self._torch_device is None:
+            raise RuntimeError("PyTorch deepfake recognizer is not initialized.")
+
+        rgb = image.convert("RGB")
+        tensor = self._preprocess(rgb).unsqueeze(0).to(self._torch_device)
+
+        with self._torch.no_grad():
+            logits = self._model(tensor).squeeze(1)
+            deepfake_score = float(self._torch.sigmoid(logits)[0].item())
+
+        real_score = float(1.0 - deepfake_score)
+        label = self.target_label if deepfake_score >= 0.5 else "Real"
+        should_change = (
+            label.casefold() == self.target_label.casefold()
+            and deepfake_score >= self.threshold
+        )
+
+        predictions = [
+            {"label": "Real", "score": real_score},
+            {"label": self.target_label, "score": deepfake_score},
+            {"label": "pt_deepfake_risk", "score": deepfake_score},
+        ]
+
+        return RecognitionDecision(
+            should_change=should_change,
+            label=label,
+            score=deepfake_score,
+            predictions=predictions,
+        )
+
+
+def _default_pt_checkpoint_path() -> Path:
+    return Path(__file__).resolve().parent / DEFAULT_PT_DEEPFAKE_CHECKPOINT
+
+
+def create_deepfake_recognizer(
+    *,
+    backend: str | None = None,
+    checkpoint_path: str | os.PathLike[str] | None = None,
+    device: int = 0,
+    target_label: str = "Deepfake",
+    threshold: float | None = None,
+    model_name: str = DEFAULT_DEEPFAKE_MODEL,
+    deterministic_weight: float = DEFAULT_DETERMINISTIC_WEIGHT,
+    deterministic_enabled: bool = True,
+) -> ImageRecognizer:
+    selected_backend = (backend or os.getenv("DEEPFAKE_MODEL_BACKEND", "pipeline")).strip().lower()
+    if selected_backend not in {"pipeline", "pt", "auto"}:
+        selected_backend = "pipeline"
+
+    resolved_checkpoint = Path(checkpoint_path) if checkpoint_path else _default_pt_checkpoint_path()
+    if selected_backend == "pt" or (selected_backend == "auto" and resolved_checkpoint.exists()):
+        return PytorchDeepFakeRecognizer(
+            checkpoint_path=resolved_checkpoint,
+            device=device,
+            target_label=target_label,
+            threshold=threshold,
+        )
+
+    fallback_threshold = 0.8 if threshold is None else float(threshold)
+    return DeepFakeRecognizer(
+        model_name=model_name,
+        device=device,
+        target_label=target_label,
+        threshold=fallback_threshold,
+        deterministic_weight=deterministic_weight,
+        deterministic_enabled=deterministic_enabled,
+    )
 
 
 class NsfwRecognizer(_BasePipelineRecognizer):
