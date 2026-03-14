@@ -30,7 +30,7 @@ class DeepFakeRecognizer:
         model_name: str = DEFAULT_DEEPFAKE_MODEL,
         device: int = 0,
         target_label: str = "Deepfake",
-        threshold: float = 0.5,
+        threshold: float = 0.8,
     ) -> None:
         self.model_name = model_name
         self.device = device
