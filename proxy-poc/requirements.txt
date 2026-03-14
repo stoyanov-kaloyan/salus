@@ -6,3 +6,4 @@ transformers
 numpy
 opencv-python-headless
 python-multipart
+sklearn
