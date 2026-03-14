@@ -1,0 +1,111 @@
+version: "3.9"
+
+networks:
+  salus-net:
+    driver: bridge
+
+volumes:
+  salus-postgres-data:
+  salus-proxy-certs:   # shared with the ./salus bash script for cert persistence
+  salus-hf-cache:      # HuggingFace + torch model cache
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks:
+      - salus-net
+    volumes:
+      - salus-postgres-data:/var/lib/postgresql/data
+      # Init files run once in alphabetical order on first boot.
+      # 01 creates the service_role (Supabase-specific) + grants BYPASSRLS to app user.
+      # 02 is the actual schema.
+      - ./proxy-poc/db/init/01-roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+      - ./proxy-poc/db/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-salus}
+      POSTGRES_USER: ${POSTGRES_USER:-salus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — copy .env.example to .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-salus} -d ${POSTGRES_DB:-salus}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── Detection API ───────────────────────────────────────────────────────────
+  api:
+    platform: linux/arm64
+    build:
+      context: ./proxy-poc
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - salus-net
+    ports:
+      - "${API_HOST_PORT:-8000}:8000"
+    volumes:
+      # Persist model cache so HuggingFace downloads survive container rebuilds
+      - salus-hf-cache:/root/.cache
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-salus}:${POSTGRES_PASSWORD:?}@db:5432/${POSTGRES_DB:-salus}
+      # Supabase client is not used in the Docker context; psycopg2 + DATABASE_URL is used directly
+      SUPABASE_URL: ""
+      SUPABASE_KEY: ""
+      DEEPFAKE_MODEL_BACKEND: ${DEEPFAKE_MODEL_BACKEND:-auto}
+      DEEPFAKE_PT_CHECKPOINT_PATH: ${DEEPFAKE_PT_CHECKPOINT_PATH:-deepfake_resnet18_best.pt}
+      DEEPFAKE_THRESHOLD: ${DEEPFAKE_THRESHOLD:-0.5}
+      DEEPFAKE_DEVICE: ${DEEPFAKE_DEVICE:--1}
+      FLUX_MODEL_NAME: ${FLUX_MODEL_NAME:-prithivMLmods/OpenSDI-Flux.1-SigLIP2}
+      FLUX_THRESHOLD: ${FLUX_THRESHOLD:-0.5}
+      FLUX_DEVICE: ${FLUX_DEVICE:--1}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
+      HOST: 0.0.0.0
+      PORT: "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s  # cold start downloads HuggingFace models (~1-2 GB)
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  web:
+    build:
+      context: ./salus-web-app
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    restart: unless-stopped
+    networks:
+      - salus-net
+    ports:
+      - "${WEB_HOST_PORT:-3000}:3000"
+    depends_on:
+      - api
+
+  # ── mitmproxy ───────────────────────────────────────────────────────────────
+  proxy:
+    build:
+      context: ./proxy
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - salus-net
+    ports:
+      - "${PROXY_HOST_PORT:-8080}:8080"
+    volumes:
+      - salus-proxy-certs:/certs
+    environment:
+      DETECTION_API_URL: http://api:8000
+      DETECTION_RECOGNIZERS: ${DETECTION_RECOGNIZERS:-deepfake,nsfw}
+      MIN_IMAGE_BYTES: ${MIN_IMAGE_BYTES:-10240}
+      PROXY_SETUP_HOST: ${PROXY_SETUP_HOST:-salus.proxy}
+    depends_on:
+      api:
+        condition: service_healthy

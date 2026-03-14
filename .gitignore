@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 proxy/certs/mitmproxy*
 proxy/clients.json
+.env*
