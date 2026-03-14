@@ -235,65 +235,6 @@ const Dashboard = () => {
                         <h2 className="font-mono text-xs uppercase tracking-wider text-muted-foreground mb-6">
                             Analytics
                         </h2>
-                        {/* Line Chart — Weekly Threats */}
-                        <div className="mb-8">
-                            <h3 className="font-serif text-xl mb-4">
-                                7-Day Trend
-                            </h3>
-                            <div className="border p-4">
-                                <ChartContainer
-                                    config={chartConfig}
-                                    className="h-[180px] w-full">
-                                    <LineChart
-                                        data={weeklyData}
-                                        margin={{
-                                            top: 5,
-                                            right: 5,
-                                            bottom: 5,
-                                            left: -20,
-                                        }}>
-                                        <CartesianGrid
-                                            strokeDasharray="3 3"
-                                            stroke="hsl(220, 20%, 12%)"
-                                            opacity={0.15}
-                                        />
-                                        <XAxis
-                                            dataKey="day"
-                                            tick={{
-                                                fontSize: 11,
-                                                fontFamily: "'JetBrains Mono'",
-                                            }}
-                                            stroke="hsl(220, 20%, 12%)"
-                                            strokeWidth={0.5}
-                                        />
-                                        <YAxis
-                                            tick={{
-                                                fontSize: 11,
-                                                fontFamily: "'JetBrains Mono'",
-                                            }}
-                                            stroke="hsl(220, 20%, 12%)"
-                                            strokeWidth={0.5}
-                                        />
-                                        <ChartTooltip
-                                            content={<ChartTooltipContent />}
-                                        />
-                                        <Line
-                                            type="linear"
-                                            dataKey="threats"
-                                            stroke="hsl(205, 86%, 76%)"
-                                            strokeWidth={2}
-                                            dot={{
-                                                r: 3,
-                                                fill: "hsl(205, 86%, 76%)",
-                                                stroke: "hsl(220, 20%, 12%)",
-                                                strokeWidth: 1,
-                                            }}
-                                        />
-                                    </LineChart>
-                                </ChartContainer>
-                            </div>
-                        </div>
-
                         {/* Bar Chart — Categories */}
                         <div className="mb-8">
                             <h3 className="font-serif text-xl mb-4">
