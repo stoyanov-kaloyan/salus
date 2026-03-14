@@ -1,7 +1,9 @@
+import asyncio
 import io
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from pydantic import BaseModel
 from PIL import Image
 import os
@@ -35,11 +37,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Content Moderation API", lifespan=lifespan)
 
+RECOGNIZER_NAMES = {"deepfake", "nsfw", "flux"}
+
 class DetectionResult(BaseModel):
     is_target: bool
     label: str
     score: float
     all_predictions: list[dict]
+
+class MultiDetectionResult(BaseModel):
+    results: dict[str, DetectionResult]
 
 @app.post("/detect/image/deepfake", response_model=DetectionResult)
 async def detect_image_deepfake(file: UploadFile = File(...)):
@@ -56,6 +63,46 @@ async def detect_image_nsfw(file: UploadFile = File(...)):
 async def detect_image_flux(file: UploadFile = File(...)):
     """Analyze an image for Flux.1-generated content."""
     return await _process_image(file, models['flux'])
+
+@app.post("/detect/image", response_model=MultiDetectionResult)
+async def detect_image_multi(
+    file: Annotated[UploadFile, File(...)],
+    recognizers: Annotated[str, Form(..., description="Comma-separated list of recognizers to run: deepfake, nsfw, flux")],
+):
+    """Run one or more recognizers on an image in parallel and return combined results."""
+    requested = {name.strip().lower() for name in recognizers.split(",") if name.strip()}
+    unknown = requested - RECOGNIZER_NAMES
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown recognizer(s): {', '.join(sorted(unknown))}. Valid options: {', '.join(sorted(RECOGNIZER_NAMES))}")
+    if not requested:
+        raise HTTPException(status_code=400, detail="At least one recognizer must be specified.")
+
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Uploaded file must be an image.")
+
+    contents = await file.read()
+
+    async def _run_one(name: str) -> tuple[str, DetectionResult]:
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+        return name, await _process_image_from_bytes(image, models[name])
+
+    pairs = await asyncio.gather(*[_run_one(name) for name in requested])
+    return MultiDetectionResult(results=dict(pairs))
+
+
+async def _process_image_from_bytes(image: Image.Image, recognizer) -> DetectionResult:
+    """Run a recognizer against an already-opened PIL image."""
+    try:
+        decision = recognizer.evaluate(image)
+        return DetectionResult(
+            is_target=decision.should_change,
+            label=decision.label,
+            score=decision.score,
+            all_predictions=decision.predictions,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+
 
 async def _process_image(file: UploadFile, recognizer) -> DetectionResult:
     """Helper function to read the image and run the model."""
