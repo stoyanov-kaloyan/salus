@@ -1,0 +1,64 @@
+# ── PVC for CA cert persistence ────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: proxy-certs
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Mi
+
+---
+
+# ── Deployment ─────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: proxy
+  template:
+    metadata:
+      labels:
+        app: proxy
+    spec:
+      containers:
+        - name: proxy
+          image: salus/proxy:latest
+          imagePullPolicy: Never  # loaded via: kind load docker-image salus/proxy:latest --name salus
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PROXY_ADDR
+              value: ":8080"
+            - name: PROXY_CA_CERT
+              value: "/certs/ca.crt"
+            - name: PROXY_CA_KEY
+              value: "/certs/ca.key"
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+      volumes:
+        - name: certs
+          persistentVolumeClaim:
+            claimName: proxy-certs
+
+---
+
+# ── Service (NodePort for external device access) ──────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxy
+spec:
+  type: NodePort
+  selector:
+    app: proxy
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080
