@@ -1,16 +1,13 @@
-import { Link } from "react-router-dom";
 import { useMemo } from "react";
-import { format, parseISO, formatDistanceToNow } from "date-fns";
-import { useSummary, useDaily, useEvents } from "@/hooks/useStats";
-import { Separator } from "@/components/ui/separator";
+import { parseISO, formatDistanceToNow } from "date-fns";
+import { useSummary, useEvents } from "@/hooks/useStats";
+import SiteHeader from "@/components/SiteHeader";
 import {
     ChartContainer,
     ChartTooltip,
     ChartTooltipContent,
 } from "@/components/ui/chart";
 import {
-    Line,
-    LineChart,
     Bar,
     BarChart,
     XAxis,
@@ -21,13 +18,6 @@ import {
     Cell,
 } from "recharts";
 
-const today = new Date().toLocaleDateString("en-US", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-});
-
 const PIE_COLORS = ["hsl(205, 86%, 76%)", "hsl(40, 10%, 90%)"];
 
 const chartConfig = {
@@ -37,7 +27,6 @@ const chartConfig = {
 
 const Dashboard = () => {
     const { data: summary } = useSummary();
-    const { data: dailyStats } = useDaily({ days: 7 });
     const { data: recentEvents } = useEvents({ flagged_only: true, limit: 8 });
 
     const totalScans = useMemo(
@@ -72,21 +61,6 @@ const Dashboard = () => {
             addSuffix: true,
         });
     }, [summary]);
-
-    const weeklyData = useMemo(() => {
-        if (!dailyStats?.length) return [];
-        const byDay = new Map<string, number>();
-        for (const row of dailyStats) {
-            byDay.set(row.day, (byDay.get(row.day) ?? 0) + row.flagged_count);
-        }
-        return Array.from(byDay.entries())
-            .sort(([a], [b]) => a.localeCompare(b))
-            .slice(-7)
-            .map(([day, threats]) => ({
-                day: format(parseISO(day), "EEE"),
-                threats,
-            }));
-    }, [dailyStats]);
 
     const categoryData = useMemo(
         () =>
@@ -127,36 +101,7 @@ const Dashboard = () => {
 
     return (
         <div className="min-h-screen bg-background text-foreground">
-            <header className="border-b">
-                <div className="container max-w-7xl mx-auto px-6 py-4">
-                    <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-                            {today}
-                        </span>
-                        <Link
-                            to="/"
-                            className="text-4xl md:text-5xl font-serif tracking-tight hover:text-accent transition-colors">
-                            SALUS
-                        </Link>
-                        <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-                            The Ledger
-                        </span>
-                    </div>
-                </div>
-                <Separator />
-                <div className="container max-w-7xl mx-auto px-6 py-2 flex justify-center gap-8">
-                    <Link
-                        to="/"
-                        className="font-mono text-xs uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
-                        Front Page
-                    </Link>
-                    <Link
-                        to="/dashboard"
-                        className="font-mono text-xs uppercase tracking-wider text-foreground">
-                        The Ledger
-                    </Link>
-                </div>
-            </header>
+            <SiteHeader active="dashboard" />
 
             <main className="container max-w-7xl mx-auto px-6 py-8">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-border">
