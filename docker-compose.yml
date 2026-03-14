@@ -97,6 +97,25 @@ services:
     networks:
       - salus
 
+  # ── Proxy ──────────────────────────────────────────────────────────────────
+
+  proxy:
+    build:
+      context: ./proxy
+      dockerfile: Dockerfile
+    container_name: proxy
+    hostname: proxy
+    ports:
+      - "8080:8080"
+    environment:
+      PROXY_ADDR: ":8080"
+      PROXY_CA_CERT: "/certs/ca.crt"
+      PROXY_CA_KEY: "/certs/ca.key"
+    volumes:
+      - proxy-certs:/certs
+    networks:
+      - salus
+
   # ── Redis ──────────────────────────────────────────────────────────────────
 
   redis:
@@ -117,6 +136,7 @@ volumes:
   kafka-3-data:
   timescaledb-data:
   redis-data:
+  proxy-certs:
 
 networks:
   salus:
