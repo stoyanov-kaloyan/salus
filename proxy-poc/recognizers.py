@@ -407,7 +407,7 @@ class NsfwRecognizer(_BasePipelineRecognizer):
         model_name: str = DEFAULT_NSFW_MODEL,
         device: int = 0,
         target_label: str = "nsfw",
-        threshold: float = 0.5,
+        threshold: float = 0.25,
     ) -> None:
         super().__init__(
             model_name=model_name,
