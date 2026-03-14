@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
+import { useMemo } from "react";
 import { Shield, Eye, Globe, ArrowRight } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
+import { useSummary } from "@/hooks/useStats";
 
 const features = [
     {
@@ -18,12 +20,6 @@ const features = [
         title: "Malicious Domain Blocking",
         desc: "Continuous threat intelligence feed cross-referenced against live DNS queries. Phishing, malware, and C2 domains neutralized.",
     },
-];
-
-const stats = [
-    { value: "99.2%", label: "Accuracy" },
-    { value: "14ms", label: "Avg. Latency" },
-    { value: "1M+", label: "Threats Blocked" },
 ];
 
 const steps = [
@@ -45,6 +41,43 @@ const steps = [
 ];
 
 const Index = () => {
+    const { data: summary, isLoading: summaryLoading } = useSummary();
+
+    const liveStats = useMemo(() => {
+        const rows = summary ?? [];
+        const totalScans = rows.reduce((acc, row) => acc + row.total_scans, 0);
+        const totalFlagged = rows.reduce(
+            (acc, row) => acc + row.flagged_count,
+            0,
+        );
+
+        const weightedScore = rows.reduce((acc, row) => {
+            if (row.avg_flagged_score == null || row.flagged_count <= 0) {
+                return acc;
+            }
+            return acc + row.avg_flagged_score * row.flagged_count;
+        }, 0);
+
+        const confidence =
+            totalFlagged > 0
+                ? `${((weightedScore / totalFlagged) * 100).toFixed(1)}%`
+                : "—";
+
+        const flagRate =
+            totalScans > 0
+                ? `${((totalFlagged / totalScans) * 100).toFixed(1)}%`
+                : "—";
+
+        return [
+            { value: confidence, label: "Detection Confidence" },
+            { value: flagRate, label: "Flag Rate" },
+            {
+                value: totalFlagged.toLocaleString(),
+                label: "Threats Detected",
+            },
+        ];
+    }, [summary]);
+
     return (
         <div className="min-h-screen bg-background text-foreground">
             <SiteHeader active="home" />
@@ -52,29 +85,42 @@ const Index = () => {
             {/* Hero */}
             <section className="border-b">
                 <div className="container max-w-6xl mx-auto px-6 py-16 md:py-24">
-                    <h2 className="text-4xl md:text-6xl lg:text-7xl font-serif leading-[1.1] max-w-4xl">
-                        Your Network's
-                        <br />
-                        Daily Guardian.
-                    </h2>
-                    <p className="mt-6 text-lg md:text-xl text-muted-foreground max-w-2xl leading-relaxed">
-                        Salus is an AI-powered content filter and proxy that
-                        stands between your users and the worst of the internet
-                        — blocking NSFW material, synthetic media, and malicious
-                        domains before they cause harm.
-                    </p>
-                    <div className="mt-10 flex flex-wrap gap-4">
-                        <Link
-                            to="/dashboard"
-                            className="inline-flex items-center gap-2 bg-primary text-primary-foreground font-mono text-sm uppercase tracking-wider px-6 py-3 border border-foreground shadow-[3px_3px_0px_0px_hsl(var(--foreground))] hover:shadow-none hover:translate-x-[3px] hover:translate-y-[3px] transition-all">
-                            Open the Ledger
-                            <ArrowRight className="w-4 h-4" />
-                        </Link>
-                        <a
-                            href="#how-it-works"
-                            className="inline-flex items-center gap-2 bg-background text-foreground font-mono text-sm uppercase tracking-wider px-6 py-3 border border-foreground hover:bg-foreground hover:text-background transition-colors">
-                            How It Works
-                        </a>
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
+                        <div className="lg:col-span-7">
+                            <h2 className="text-4xl md:text-6xl lg:text-7xl font-serif leading-[1.1] max-w-4xl">
+                                Your Network's
+                                <br />
+                                Daily Guardian.
+                            </h2>
+                            <p className="mt-6 text-lg md:text-xl text-muted-foreground max-w-2xl leading-relaxed">
+                                Salus is an AI-powered content filter and proxy
+                                that stands between your users and the worst of
+                                the internet — blocking NSFW material, synthetic
+                                media, and malicious domains before they cause
+                                harm.
+                            </p>
+                            <div className="mt-10 flex flex-wrap gap-4">
+                                <Link
+                                    to="/dashboard"
+                                    className="inline-flex items-center gap-2 bg-primary text-primary-foreground font-mono text-sm uppercase tracking-wider px-6 py-3 border border-foreground shadow-[3px_3px_0px_0px_hsl(var(--foreground))] hover:shadow-none hover:translate-x-[3px] hover:translate-y-[3px] transition-all">
+                                    Open the Ledger
+                                    <ArrowRight className="w-4 h-4" />
+                                </Link>
+                                <a
+                                    href="#how-it-works"
+                                    className="inline-flex items-center gap-2 bg-background text-foreground font-mono text-sm uppercase tracking-wider px-6 py-3 border border-foreground hover:bg-foreground hover:text-background transition-colors">
+                                    How It Works
+                                </a>
+                            </div>
+                        </div>
+
+                        <div className="lg:col-span-5 flex justify-center lg:justify-end">
+                            <img
+                                src="/logo2.png"
+                                alt="Salus logo"
+                                className="w-full max-w-[420px] h-auto object-contain"
+                            />
+                        </div>
                     </div>
                 </div>
             </section>
@@ -107,12 +153,12 @@ const Index = () => {
             <section className="border-b">
                 <div className="container max-w-6xl mx-auto px-6">
                     <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-border">
-                        {stats.map((s) => (
+                        {liveStats.map((s) => (
                             <div
                                 key={s.label}
                                 className="py-10 md:px-8 first:md:pl-0 last:md:pr-0 text-center md:text-left">
                                 <span className="block font-mono text-4xl md:text-5xl font-bold tracking-tight">
-                                    {s.value}
+                                    {summaryLoading ? "..." : s.value}
                                 </span>
                                 <span className="block font-mono text-xs text-muted-foreground uppercase tracking-wider mt-2">
                                     {s.label}

@@ -418,16 +418,21 @@ class NsfwRecognizer(_BasePipelineRecognizer):
 
     def evaluate(self, image: Image.Image) -> RecognitionDecision:
         predictions = self._predict(image)
-        label, score = self._select_target_score(predictions)
+        _, score = self._select_target_score(predictions)
 
-        should_change = (
-            label.casefold() == self.target_label.casefold()
-            and score >= self.threshold
-        )
+        should_change = score >= self.threshold
+
+        if should_change:
+            final_label = self.target_label
+        elif predictions:
+            top = max(predictions, key=lambda p: float(p.get("score", 0.0)))
+            final_label = str(top.get("label", "unknown"))
+        else:
+            final_label = "unknown"
 
         return RecognitionDecision(
             should_change=should_change,
-            label=label,
+            label=final_label,
             score=score,
             predictions=predictions,
         )
