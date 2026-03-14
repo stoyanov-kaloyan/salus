@@ -29,13 +29,18 @@ func main() {
 
 	proxy := newProxy(cfg, cert)
 
-	mux := http.NewServeMux()
-	mux.Handle("/ca.crt", caHandler(cfg.CACertFile))
-	mux.Handle("/", proxy)
+	ca := caHandler(cfg.CACertFile)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect && r.URL.Path == "/ca.crt" {
+			ca.ServeHTTP(w, r)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	})
 
 	srv := &http.Server{
 		Addr:        cfg.Addr,
-		Handler:     mux,
+		Handler:     handler,
 		ReadTimeout: 30 * time.Second,
 		// WriteTimeout intentionally 0: CONNECT tunnels are long-lived.
 		IdleTimeout: 120 * time.Second,
