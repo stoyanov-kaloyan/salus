@@ -12,3 +12,6 @@ uvicorn
 recognizers
 torch
 torchvision
+supabase
+python-dotenv
+psycopg2-binary
