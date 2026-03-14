@@ -17,3 +17,10 @@
 
 2. Go to `http://mitm.it` and download the sertificate for iOS
 3. General > About > Certificate Trust Settings > Enable full trust for root certificates
+
+## Available filters
+
+- NSFW filter
+- Deepfake filter
+- Domain filter
+- Harmful text filter
