@@ -85,29 +85,42 @@ const Index = () => {
             {/* Hero */}
             <section className="border-b">
                 <div className="container max-w-6xl mx-auto px-6 py-16 md:py-24">
-                    <h2 className="text-4xl md:text-6xl lg:text-7xl font-serif leading-[1.1] max-w-4xl">
-                        Your Network's
-                        <br />
-                        Daily Guardian.
-                    </h2>
-                    <p className="mt-6 text-lg md:text-xl text-muted-foreground max-w-2xl leading-relaxed">
-                        Salus is an AI-powered content filter and proxy that
-                        stands between your users and the worst of the internet
-                        — blocking NSFW material, synthetic media, and malicious
-                        domains before they cause harm.
-                    </p>
-                    <div className="mt-10 flex flex-wrap gap-4">
-                        <Link
-                            to="/dashboard"
-                            className="inline-flex items-center gap-2 bg-primary text-primary-foreground font-mono text-sm uppercase tracking-wider px-6 py-3 border border-foreground shadow-[3px_3px_0px_0px_hsl(var(--foreground))] hover:shadow-none hover:translate-x-[3px] hover:translate-y-[3px] transition-all">
-                            Open the Ledger
-                            <ArrowRight className="w-4 h-4" />
-                        </Link>
-                        <a
-                            href="#how-it-works"
-                            className="inline-flex items-center gap-2 bg-background text-foreground font-mono text-sm uppercase tracking-wider px-6 py-3 border border-foreground hover:bg-foreground hover:text-background transition-colors">
-                            How It Works
-                        </a>
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
+                        <div className="lg:col-span-7">
+                            <h2 className="text-4xl md:text-6xl lg:text-7xl font-serif leading-[1.1] max-w-4xl">
+                                Your Network's
+                                <br />
+                                Daily Guardian.
+                            </h2>
+                            <p className="mt-6 text-lg md:text-xl text-muted-foreground max-w-2xl leading-relaxed">
+                                Salus is an AI-powered content filter and proxy
+                                that stands between your users and the worst of
+                                the internet — blocking NSFW material, synthetic
+                                media, and malicious domains before they cause
+                                harm.
+                            </p>
+                            <div className="mt-10 flex flex-wrap gap-4">
+                                <Link
+                                    to="/dashboard"
+                                    className="inline-flex items-center gap-2 bg-primary text-primary-foreground font-mono text-sm uppercase tracking-wider px-6 py-3 border border-foreground shadow-[3px_3px_0px_0px_hsl(var(--foreground))] hover:shadow-none hover:translate-x-[3px] hover:translate-y-[3px] transition-all">
+                                    Open the Ledger
+                                    <ArrowRight className="w-4 h-4" />
+                                </Link>
+                                <a
+                                    href="#how-it-works"
+                                    className="inline-flex items-center gap-2 bg-background text-foreground font-mono text-sm uppercase tracking-wider px-6 py-3 border border-foreground hover:bg-foreground hover:text-background transition-colors">
+                                    How It Works
+                                </a>
+                            </div>
+                        </div>
+
+                        <div className="lg:col-span-5 flex justify-center lg:justify-end">
+                            <img
+                                src="/logo2.png"
+                                alt="Salus logo"
+                                className="w-full max-w-[420px] h-auto object-contain"
+                            />
+                        </div>
                     </div>
                 </div>
             </section>
