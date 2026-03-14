@@ -85,6 +85,36 @@ class TestHybridRiskPipeline(unittest.TestCase):
         self.assertIn("deterministic_risk", labels)
         self.assertIn("fused_deepfake_risk", labels)
 
+    def test_deepfake_recognizer_prioritizes_neural_on_conflict(self) -> None:
+        image = Image.fromarray(np.random.randint(0, 255, (128, 128, 3), dtype=np.uint8), mode="RGB")
+
+        with patch("recognizers.pipeline", return_value=_FakePipe()):
+            recognizer = DeepFakeRecognizer(
+                threshold=0.50,
+                deterministic_weight=0.45,
+                deterministic_enabled=True,
+            )
+
+            with patch.object(
+                recognizer,
+                "_run_neural_variant_voting",
+                return_value=(
+                    "Deepfake",
+                    0.92,
+                    [{"label": "Deepfake", "score": 0.92}],
+                    [],
+                ),
+            ), patch.object(
+                recognizer,
+                "_run_deterministic_risk",
+                return_value={"risk": 0.05, "scores": {"laplacian": 0.2}},
+            ):
+                decision = recognizer.evaluate(image)
+
+        self.assertTrue(decision.should_change)
+        self.assertEqual(decision.label.casefold(), "deepfake")
+        self.assertGreater(decision.score, 0.80)
+
 
 if __name__ == "__main__":
     unittest.main()

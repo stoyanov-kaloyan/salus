@@ -14,6 +14,11 @@ from deterministic_analysis import DEFAULT_ANALYSIS_PROFILE, StaticRiskEvaluator
 
 DEFAULT_DEEPFAKE_MODEL = "prithivMLmods/Deep-Fake-Detector-v2-Model"
 DEFAULT_NSFW_MODEL = "Falconsai/nsfw_image_detection"
+DEFAULT_DETERMINISTIC_WEIGHT = 0.20
+DEFAULT_NEURAL_PRIORITY_WEIGHT = 0.90
+DEFAULT_NEURAL_CONFLICT_THRESHOLD = 0.25
+DEFAULT_NEURAL_OVERRIDE_THRESHOLD = 0.85
+DEFAULT_NEURAL_OVERRIDE_WEIGHT = 0.95
 
 DEFAULT_NEURAL_VARIANT_WEIGHTS: dict[str, float] = {
     "original": 0.55,
@@ -93,7 +98,7 @@ class DeepFakeRecognizer(_BasePipelineRecognizer):
         device: int = 0,
         target_label: str = "Deepfake",
         threshold: float = 0.8,
-        deterministic_weight: float = 0.35,
+        deterministic_weight: float = DEFAULT_DETERMINISTIC_WEIGHT,
         deterministic_enabled: bool = True,
     ) -> None:
         super().__init__(
@@ -110,6 +115,46 @@ class DeepFakeRecognizer(_BasePipelineRecognizer):
         self.deterministic_weight = float(np.clip(deterministic_weight, 0.0, 0.9))
         self.neural_weight = float(np.clip(1.0 - self.deterministic_weight, 0.1, 1.0))
         self.neural_variant_weights = dict(DEFAULT_NEURAL_VARIANT_WEIGHTS)
+
+        env_neural_priority = os.getenv("DEEPFAKE_NEURAL_PRIORITY_WEIGHT")
+        self.neural_priority_weight = float(
+            np.clip(
+                float(env_neural_priority) if env_neural_priority is not None else DEFAULT_NEURAL_PRIORITY_WEIGHT,
+                0.50,
+                1.00,
+            )
+        )
+
+        env_conflict_threshold = os.getenv("DEEPFAKE_NEURAL_CONFLICT_THRESHOLD")
+        self.neural_conflict_threshold = float(
+            np.clip(
+                float(env_conflict_threshold)
+                if env_conflict_threshold is not None
+                else DEFAULT_NEURAL_CONFLICT_THRESHOLD,
+                0.05,
+                1.00,
+            )
+        )
+
+        env_override_threshold = os.getenv("DEEPFAKE_NEURAL_OVERRIDE_THRESHOLD")
+        self.neural_override_threshold = float(
+            np.clip(
+                float(env_override_threshold)
+                if env_override_threshold is not None
+                else DEFAULT_NEURAL_OVERRIDE_THRESHOLD,
+                0.05,
+                1.00,
+            )
+        )
+
+        env_override_weight = os.getenv("DEEPFAKE_NEURAL_OVERRIDE_WEIGHT")
+        self.neural_override_weight = float(
+            np.clip(
+                float(env_override_weight) if env_override_weight is not None else DEFAULT_NEURAL_OVERRIDE_WEIGHT,
+                0.50,
+                1.00,
+            )
+        )
 
         env_det_toggle = os.getenv("DEEPFAKE_USE_DETERMINISTIC")
         if env_det_toggle is not None:
@@ -214,10 +259,21 @@ class DeepFakeRecognizer(_BasePipelineRecognizer):
 
         fused = self.neural_weight * neural_score + self.deterministic_weight * deterministic_score
 
-        # If signals diverge strongly, trust neural slightly more while keeping deterministic influence.
+        # In conflicts, prioritize the neural deepfake detector.
         disagreement = abs(neural_score - deterministic_score)
-        if disagreement > 0.55:
-            fused = 0.70 * neural_score + 0.30 * fused
+        if disagreement >= self.neural_conflict_threshold:
+            fused = (
+                self.neural_priority_weight * neural_score
+                + (1.0 - self.neural_priority_weight) * deterministic_score
+            )
+
+        # When the neural branch is highly confident, bias harder toward it.
+        if neural_score >= self.neural_override_threshold:
+            override_fused = (
+                self.neural_override_weight * neural_score
+                + (1.0 - self.neural_override_weight) * deterministic_score
+            )
+            fused = max(fused, override_fused)
 
         return float(np.clip(fused, 0.0, 1.0))
 

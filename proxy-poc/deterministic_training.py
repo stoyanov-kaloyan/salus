@@ -3,10 +3,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Literal, Mapping
 
 import cv2
 import numpy as np
@@ -68,11 +68,17 @@ def load_manifest(manifest_path: Path) -> list[LabeledImage]:
     return rows
 
 
+def _init_feature_worker() -> None:
+    # Avoid nested OpenCV thread oversubscription when using process-level parallelism.
+    cv2.setNumThreads(1)
+
+
 def _extract_feature_vector(
     sample: LabeledImage,
     feature_order: list[str],
     variant_weights: Mapping[str, float],
     max_image_side: int,
+    analyzer_parallel: bool,
 ) -> tuple[np.ndarray, int]:
     image = cv2.imread(str(sample.path))
     if image is None:
@@ -81,7 +87,7 @@ def _extract_feature_vector(
     scores = run_multiview_analyzers(
         image,
         variant_weights=variant_weights,
-        parallel=True,
+        parallel=analyzer_parallel,
         feature_names=feature_order,
         max_image_side=max_image_side,
     )
@@ -95,12 +101,21 @@ def extract_dataset(
     max_workers: int,
     variant_weights: Mapping[str, float],
     max_image_side: int,
+    executor_backend: Literal["thread", "process"],
 ) -> tuple[np.ndarray, np.ndarray]:
     vectors: list[np.ndarray] = []
     labels: list[int] = []
 
     workers = max(1, min(max_workers, len(samples)))
-    with ThreadPoolExecutor(max_workers=workers) as executor:
+    use_processes = executor_backend == "process" and workers > 1
+    analyzer_parallel = not use_processes
+
+    executor_cls = ProcessPoolExecutor if use_processes else ThreadPoolExecutor
+    executor_kwargs: dict[str, object] = {"max_workers": workers}
+    if use_processes:
+        executor_kwargs["initializer"] = _init_feature_worker
+
+    with executor_cls(**executor_kwargs) as executor:
         futures = {
             executor.submit(
                 _extract_feature_vector,
@@ -108,6 +123,7 @@ def extract_dataset(
                 feature_order,
                 variant_weights,
                 max_image_side,
+                analyzer_parallel,
             ): sample
             for sample in samples
         }
@@ -134,18 +150,34 @@ def train_logistic_regression(
     epochs: int,
     learning_rate: float,
     l2: float,
+    class_balance: bool = True,
 ) -> tuple[np.ndarray, float]:
     num_features = x_train.shape[1]
     weights = np.zeros(num_features, dtype=np.float32)
     bias = 0.0
 
+    if class_balance:
+        positives = float(np.sum(y_train == 1.0))
+        negatives = float(np.sum(y_train == 0.0))
+        total = positives + negatives
+        if positives > 0.0 and negatives > 0.0:
+            pos_weight = total / (2.0 * positives)
+            neg_weight = total / (2.0 * negatives)
+            sample_weights = np.where(y_train == 1.0, pos_weight, neg_weight).astype(np.float32)
+        else:
+            sample_weights = np.ones_like(y_train, dtype=np.float32)
+    else:
+        sample_weights = np.ones_like(y_train, dtype=np.float32)
+
+    sample_weight_sum = float(sample_weights.sum()) + 1e-9
+
     for _ in range(epochs):
         logits = x_train @ weights + bias
         probs = _sigmoid(logits)
-        error = probs - y_train
+        error = (probs - y_train) * sample_weights
 
-        grad_w = (x_train.T @ error) / x_train.shape[0] + l2 * weights
-        grad_b = float(error.mean())
+        grad_w = (x_train.T @ error) / sample_weight_sum + l2 * weights
+        grad_b = float(error.sum() / sample_weight_sum)
 
         weights -= learning_rate * grad_w
         bias -= learning_rate * grad_b
@@ -221,6 +253,8 @@ def save_calibration(
     profile: str,
     variant_weights: Mapping[str, float],
     max_image_side: int,
+    class_balance: bool,
+    executor_backend: str,
 ) -> None:
     payload = {
         "feature_order": feature_order,
@@ -235,6 +269,8 @@ def save_calibration(
         "profile": str(profile),
         "variant_weights": {k: float(v) for k, v in variant_weights.items()},
         "max_image_side": int(max_image_side),
+        "class_balance": bool(class_balance),
+        "executor_backend": str(executor_backend),
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -251,6 +287,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-fraction", type=float, default=0.20, help="Validation split fraction")
     parser.add_argument("--max-workers", type=int, default=4, help="Parallel workers for feature extraction")
     parser.add_argument(
+        "--executor",
+        choices=("thread", "process"),
+        default="process",
+        help="Parallel backend for feature extraction (process is best for CPU-heavy OpenCV work)",
+    )
+    parser.add_argument(
         "--profile",
         default=DEFAULT_ANALYSIS_PROFILE,
         choices=tuple(sorted(ANALYZER_PROFILES.keys())),
@@ -263,6 +305,11 @@ def parse_args() -> argparse.Namespace:
         help="Override the profile default resize cap before deterministic analysis",
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--disable-class-balance",
+        action="store_true",
+        help="Disable class-balanced loss weighting during logistic regression training",
+    )
     return parser.parse_args()
 
 
@@ -283,6 +330,7 @@ def main() -> None:
         max_workers=args.max_workers,
         variant_weights=variant_weights,
         max_image_side=max_image_side,
+        executor_backend=args.executor,
     )
 
     x_train, y_train, x_val, y_val = split_train_validation(
@@ -305,6 +353,7 @@ def main() -> None:
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         l2=args.l2,
+        class_balance=not args.disable_class_balance,
     )
 
     val_probs = _sigmoid(x_val_std @ weights + bias)
@@ -324,12 +373,16 @@ def main() -> None:
         profile=profile,
         variant_weights=variant_weights,
         max_image_side=max_image_side,
+        class_balance=not args.disable_class_balance,
+        executor_backend=args.executor,
     )
 
     print("Calibration written:", output_path)
     print("Profile:", profile)
     print("Features:", ", ".join(feature_order))
     print("Max image side:", max_image_side)
+    print("Executor backend:", args.executor)
+    print("Class balance:", "enabled" if not args.disable_class_balance else "disabled")
     print("Validation metrics:", metrics)
     print("Recommended threshold:", round(threshold, 4))
 

@@ -68,12 +68,15 @@ python .\deterministic_training.py `
   --manifest .\manifest.csv `
   --output .\deterministic_calibration.json `
   --profile fast `
+  --executor process `
   --epochs 1200 `
   --validation-fraction 0.20 `
   --max-workers 4
 ```
 
 The deterministic runtime uses the `fast` profile by default to keep request latency down. If you train a calibration file, use the same profile and image-size cap in both training and serving so the learned weights match the live feature vectors.
+
+Feature extraction in `deterministic_training.py` supports `--executor process` (default) for CPU-bound OpenCV workloads, with `--executor thread` available as a fallback.
 
 ## Using the Calibration File
 
@@ -84,9 +87,15 @@ export DETERMINISTIC_CALIBRATION_PATH=/path/to/deterministic_calibration.json
 export DETERMINISTIC_PROFILE=fast
 export DETERMINISTIC_MAX_SIDE=512
 export DEEPFAKE_USE_DETERMINISTIC=true
-export DEEPFAKE_DETERMINISTIC_WEIGHT=0.35
+export DEEPFAKE_DETERMINISTIC_WEIGHT=0.20
+export DEEPFAKE_NEURAL_PRIORITY_WEIGHT=0.90
+export DEEPFAKE_NEURAL_CONFLICT_THRESHOLD=0.25
+export DEEPFAKE_NEURAL_OVERRIDE_THRESHOLD=0.85
+export DEEPFAKE_NEURAL_OVERRIDE_WEIGHT=0.95
 
 uvicorn api:app --host 0.0.0.0 --port 8000
 ```
 
 This notebook now trains the `fast` profile, so the serving path should use the same profile and resize cap when you deploy the resulting calibration file.
+
+The deepfake fusion now gives explicit priority to the neural detector when signals conflict or the neural branch is highly confident. Deterministic risk still contributes as a secondary signal.
