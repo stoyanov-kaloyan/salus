@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, BackgroundTasks, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from PIL import Image
 import os
@@ -24,6 +25,22 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 models = {}
+
+
+def _cors_origins() -> list[str]:
+    configured = os.getenv("CORS_ALLOW_ORIGINS", "")
+    if configured.strip():
+        return [origin.strip() for origin in configured.split(",") if origin.strip()]
+    return [
+        "http://localhost:3000",
+        "http://localhost:4173",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:4173",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8080",
+    ]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,6 +66,13 @@ async def lifespan(app: FastAPI):
     models.clear()
 
 app = FastAPI(title="Content Moderation API", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 RECOGNIZER_NAMES = {"deepfake", "nsfw", "flux"}
 
