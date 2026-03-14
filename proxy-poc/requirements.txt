@@ -7,3 +7,7 @@ numpy
 opencv-python-headless
 python-multipart
 sklearn
+uvicorn
+recognizers
+torch
+torchvision
