@@ -30,3 +30,40 @@ uvicorn api:app --host 0.0.0.0 --port 8000
 - Deepfake filter
 - Domain filter
 - Harmful text filter
+
+## Unit Tests for python modules
+
+```
+# All tests
+python -m unittest discover -s tests
+
+# Hybrid pipeline (deterministic multiview + neural fusion logic)
+python -m unittest tests/test_hybrid_risk_pipeline.py
+
+# GPU integration test (requires transformers + a real GPU)
+python -m unittest tests/test_deepfake_recognizer_gpu_integration.py
+```
+
+### Manual CLI usage
+
+```
+# Analyze a specific image
+python .\deterministic_analysis.py .\test_images\real1.jpg
+python .\deterministic_analysis.py .\test_images\deepfake1.png
+
+# Use a trained calibration file
+$env:DETERMINISTIC_CALIBRATION_PATH = ".\deterministic_calibration.json"
+python .\deterministic_analysis.py .\test_images\real1.jpg
+```
+
+### Deterministic calibration training
+
+```
+# manifest.csv columns: path,label  (0=real, 1=deepfake)
+python .\deterministic_training.py `
+  --manifest .\manifest.csv `
+  --output .\deterministic_calibration.json `
+  --epochs 1200 `
+  --validation-fraction 0.20 `
+  --max-workers 4
+```
