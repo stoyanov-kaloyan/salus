@@ -1,9 +1,7 @@
-fastapi
-pydantic
 mitmproxy
 pillow
 transformers
 numpy
 opencv-python-headless
-python-multipart
-sklearn
+torch
+scikit-learn
