@@ -99,3 +99,49 @@ uvicorn api:app --host 0.0.0.0 --port 8000
 This notebook now trains the `fast` profile, so the serving path should use the same profile and resize cap when you deploy the resulting calibration file.
 
 The deepfake fusion now gives explicit priority to the neural detector when signals conflict or the neural branch is highly confident. Deterministic risk still contributes as a secondary signal.
+
+## Compile Presentation (Quarto)
+
+requires `quarto` CLI installed
+
+Presentation source files are in `presentation/`:
+
+- `presentation/salus_hackathon_bg.qmd`
+- `presentation/generate_charts.py`
+
+### 1) Generate chart assets (matplotlib)
+
+From repo root:
+
+```powershell
+# optional: activate local venv
+& .\.venv\Scripts\Activate.ps1
+
+# build charts used in slides
+python .\presentation\generate_charts.py
+```
+
+This writes image assets and summary metrics to `presentation/assets/`.
+
+### 2) Render slides with Quarto
+
+From repo root:
+
+```powershell
+# RevealJS HTML slides
+quarto render presentation/salus_hackathon_bg.qmd --to revealjs
+
+# PowerPoint export
+quarto render presentation/salus_hackathon_bg.qmd --to pptx
+```
+
+Generated files:
+
+- `presentation/salus_hackathon_bg.html`
+- `presentation/salus_hackathon_bg.pptx`
+
+### 3) Optional: render both in one command
+
+```powershell
+quarto render presentation/salus_hackathon_bg.qmd --to revealjs; quarto render presentation/salus_hackathon_bg.qmd --to pptx
+```
