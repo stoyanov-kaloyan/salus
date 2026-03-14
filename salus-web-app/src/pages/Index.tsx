@@ -1,13 +1,6 @@
 import { Link } from "react-router-dom";
 import { Shield, Eye, Globe, ArrowRight } from "lucide-react";
-import { Separator } from "@/components/ui/separator";
-
-const today = new Date().toLocaleDateString("en-US", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-});
+import SiteHeader from "@/components/SiteHeader";
 
 const features = [
     {
@@ -54,36 +47,7 @@ const steps = [
 const Index = () => {
     return (
         <div className="min-h-screen bg-background text-foreground">
-            {/* Masthead */}
-            <header className="border-b">
-                <div className="container max-w-6xl mx-auto px-6 py-4">
-                    <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-                            {today}
-                        </span>
-                        <h1 className="text-5xl md:text-6xl font-serif tracking-tight">
-                            SALUS
-                        </h1>
-                        <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-                            Status:{" "}
-                            <span className="text-foreground">Secure</span>
-                        </span>
-                    </div>
-                </div>
-                <Separator />
-                <div className="container max-w-6xl mx-auto px-6 py-2 flex justify-center gap-8">
-                    <Link
-                        to="/"
-                        className="font-mono text-xs uppercase tracking-wider text-foreground hover:text-accent transition-colors">
-                        Front Page
-                    </Link>
-                    <Link
-                        to="/dashboard"
-                        className="font-mono text-xs uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">
-                        The Ledger
-                    </Link>
-                </div>
-            </header>
+            <SiteHeader active="home" />
 
             {/* Hero */}
             <section className="border-b">
