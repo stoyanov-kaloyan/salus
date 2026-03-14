@@ -16,7 +16,6 @@ import {
     Pie,
     PieChart,
     Cell,
-    ResponsiveContainer,
 } from "recharts";
 
 const today = new Date().toLocaleDateString("en-US", {
