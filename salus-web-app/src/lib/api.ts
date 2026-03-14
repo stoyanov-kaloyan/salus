@@ -17,6 +17,33 @@ async function get<T>(
     return res.json() as Promise<T>;
 }
 
+async function postForm<T>(path: string, formData: FormData): Promise<T> {
+    const url = new URL(path, BASE_URL);
+    const res = await fetch(url.toString(), {
+        method: "POST",
+        body: formData,
+    });
+
+    if (!res.ok) {
+        let detail = `${res.status} ${res.statusText}`;
+        try {
+            const payload = (await res.json()) as {
+                detail?: string | Record<string, unknown>;
+            };
+            if (typeof payload.detail === "string") {
+                detail = payload.detail;
+            } else if (payload.detail) {
+                detail = JSON.stringify(payload.detail);
+            }
+        } catch {
+            // Keep fallback status text when JSON detail is unavailable.
+        }
+        throw new Error(`API error: ${detail}`);
+    }
+
+    return res.json() as Promise<T>;
+}
+
 export type RecognizerOverview = {
     recognizer: string;
     total_scans: number;
@@ -77,6 +104,19 @@ export type EventRecord = {
     times_flagged: number;
 };
 
+export type DetectionPrediction = Record<string, unknown>;
+
+export type DetectionResult = {
+    is_target: boolean;
+    label: string;
+    score: number;
+    all_predictions: DetectionPrediction[];
+};
+
+export type MultiDetectionResult = {
+    results: Record<string, DetectionResult>;
+};
+
 export const api = {
     getSummary: () => get<RecognizerOverview[]>("/stats/summary"),
 
@@ -100,4 +140,14 @@ export const api = {
         limit?: number;
         offset?: number;
     }) => get<EventRecord[]>("/stats/events", params),
+
+    detectImageMulti: (
+        file: File,
+        recognizers: string[] = ["deepfake", "nsfw", "flux"],
+    ) => {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("recognizers", recognizers.join(","));
+        return postForm<MultiDetectionResult>("/detect/image", formData);
+    },
 };
