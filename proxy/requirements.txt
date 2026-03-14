@@ -1,7 +1,4 @@
 mitmproxy
 pillow
-transformers
-numpy
-opencv-python-headless
-torch
-scikit-learn
+httpx
+python-dotenv

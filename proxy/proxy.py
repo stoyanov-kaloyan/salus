@@ -7,13 +7,13 @@ Handles:
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import io
 import os
 import uuid
 from pathlib import Path
 
+import httpx
 from mitmproxy import ctx, http
 from PIL import Image
 
@@ -21,10 +21,11 @@ from PIL import Image
 
 SETUP_HOST = os.getenv("PROXY_SETUP_HOST", "salus.proxy")
 MIN_IMAGE_BYTES = int(os.getenv("MIN_IMAGE_BYTES", str(10 * 1024)))  # skip images < 10 KB
+DETECTION_API_URL = os.getenv("DETECTION_API_URL", "http://localhost:8000")
+DETECTION_RECOGNIZERS = os.getenv("DETECTION_RECOGNIZERS", "deepfake,nsfw")
 
 # ── Module-level singletons (populated in load()) ────────────────────────────
 
-_deepfake_recognizer = None
 _cover_bytes: bytes = b""
 
 # ── Setup page ───────────────────────────────────────────────────────────────
@@ -220,7 +221,7 @@ def _serve_setup(flow: http.HTTPFlow) -> None:
 class SalusAddon:
 
     def load(self, loader) -> None:
-        global _deepfake_recognizer, _cover_bytes
+        global _cover_bytes
 
         cover_path = Path(__file__).parent / "static" / "cover.jpg"
         if cover_path.exists():
@@ -229,15 +230,7 @@ class SalusAddon:
         else:
             ctx.log.warn(f"[salus] Cover image not found at {cover_path}")
 
-        try:
-            from recognizers import DeepFakeRecognizer
-
-            device = int(os.getenv("DEEPFAKE_PIPELINE_DEVICE", "-1"))
-            threshold = float(os.getenv("DEEPFAKE_THRESHOLD", "0.8"))
-            _deepfake_recognizer = DeepFakeRecognizer(device=device, threshold=threshold)
-            ctx.log.info("[salus] DeepFakeRecognizer instantiated (model loads on first use)")
-        except Exception as exc:
-            ctx.log.warn(f"[salus] Could not instantiate DeepFakeRecognizer: {exc}")
+        ctx.log.info(f"[salus] Detection API URL: {DETECTION_API_URL}")
 
     def request(self, flow: http.HTTPFlow) -> None:
         if flow.request.pretty_host == SETUP_HOST:
@@ -251,7 +244,7 @@ class SalusAddon:
         if not content_type.startswith("image/"):
             return
 
-        if _deepfake_recognizer is None or not _cover_bytes:
+        if not _cover_bytes:
             return
 
         raw = flow.response.get_content()
@@ -259,19 +252,30 @@ class SalusAddon:
             return
 
         try:
-            image = Image.open(io.BytesIO(raw))
+            Image.open(io.BytesIO(raw))
         except Exception:
             return
 
         try:
-            decision = await asyncio.to_thread(_deepfake_recognizer.evaluate, image)
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{DETECTION_API_URL}/detect/image",
+                    files={"file": ("image", raw, content_type)},
+                    data={"recognizers": DETECTION_RECOGNIZERS},
+                    timeout=10.0,
+                )
+                resp.raise_for_status()
+                payload = resp.json()
         except Exception as exc:
-            ctx.log.warn(f"[salus] Detection error for {flow.request.pretty_url}: {exc}")
+            ctx.log.warn(f"[salus] Detection API error for {flow.request.pretty_url}: {exc}")
             return
 
-        if decision.should_change:
+        results = payload.get("results", {})
+        if any(v.get("is_target") for v in results.values()):
+            triggered = [k for k, v in results.items() if v.get("is_target")]
+            scores = {k: v.get("score", 0) for k, v in results.items() if v.get("is_target")}
             ctx.log.info(
-                f"[salus] Replacing image ({decision.label} score={decision.score:.3f}): "
+                f"[salus] Replacing image ({triggered} scores={scores}): "
                 f"{flow.request.pretty_url}"
             )
             flow.response.headers["content-type"] = "image/jpeg"

@@ -1,31 +1,76 @@
 from __future__ import annotations
 
 import os
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image
 from transformers import pipeline
 
-from deterministic_analysis import DEFAULT_ANALYSIS_PROFILE, StaticRiskEvaluator
 
-
-DEFAULT_DEEPFAKE_MODEL = "prithivMLmods/Deep-Fake-Detector-v2-Model"
 DEFAULT_NSFW_MODEL = "Falconsai/nsfw_image_detection"
-DEFAULT_DETERMINISTIC_WEIGHT = 0.20
-DEFAULT_NEURAL_PRIORITY_WEIGHT = 0.90
-DEFAULT_NEURAL_CONFLICT_THRESHOLD = 0.25
-DEFAULT_NEURAL_OVERRIDE_THRESHOLD = 0.85
-DEFAULT_NEURAL_OVERRIDE_WEIGHT = 0.95
+DEFAULT_FLUX_MODEL = "prithivMLmods/OpenSDI-Flux.1-SigLIP2"
+DEFAULT_FLUX_TARGET_LABEL = "Flux.1_Generated"
+DEFAULT_PT_DEEPFAKE_CHECKPOINT = "deepfake_resnet18_best.pt"
+DEFAULT_PT_IMAGE_SIZE = 224
+DEFAULT_PT_NORMALIZE_MEAN = (0.485, 0.456, 0.406)
+DEFAULT_PT_NORMALIZE_STD = (0.229, 0.224, 0.225)
 
-DEFAULT_NEURAL_VARIANT_WEIGHTS: dict[str, float] = {
-    "original": 0.55,
-    "autocontrast": 0.20,
-    "equalized": 0.15,
-    "sharpened": 0.10,
-}
+
+def crop_face(
+    image: Image.Image,
+    padding: float = 0.15,
+    *,
+    scale_factor: float = 1.1,
+    min_neighbors: int = 4,
+) -> Image.Image:
+    """Detect the largest face in *image* and return it cropped with padding.
+
+    Parameters
+    ----------
+    image:
+        Input PIL image (any mode; converted to RGB internally).
+    padding:
+        Fractional padding added around the detected face bounding box on
+        each side (0.15 = 15 %).  Applied relative to the bounding-box
+        dimension (width for left/right, height for top/bottom).
+    scale_factor:
+        Haar cascade ``scaleFactor`` parameter.
+    min_neighbors:
+        Haar cascade ``minNeighbors`` parameter (higher = fewer false positives).
+
+    Returns
+    -------
+    PIL.Image.Image
+        Cropped face region, or the original image when no face is detected.
+    """
+    import cv2 as _cv2
+
+    rgb = np.array(image.convert("RGB"), dtype=np.uint8)
+    bgr = _cv2.cvtColor(rgb, _cv2.COLOR_RGB2BGR)
+    gray = _cv2.cvtColor(bgr, _cv2.COLOR_BGR2GRAY)
+
+    cascade = _cv2.CascadeClassifier(_cv2.data.haarcascades + "haarcascade_frontalface_alt.xml")
+    faces = cascade.detectMultiScale(gray, scaleFactor=scale_factor, minNeighbors=min_neighbors)
+
+    if not isinstance(faces, np.ndarray) or len(faces) == 0:
+        return image
+
+    # Pick the largest face by area.
+    x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+
+    img_w, img_h = image.size
+    pad_x = int(w * padding)
+    pad_y = int(h * padding)
+
+    x1 = max(0, x - pad_x)
+    y1 = max(0, y - pad_y)
+    x2 = min(img_w, x + w + pad_x)
+    y2 = min(img_h, y + h + pad_y)
+
+    return image.convert("RGB").crop((x1, y1, x2, y2))
 
 
 @dataclass(frozen=True)
@@ -91,238 +136,269 @@ class _BasePipelineRecognizer:
         return str(top.get("label", "unknown")), float(top.get("score", 0.0))
 
 
-class DeepFakeRecognizer(_BasePipelineRecognizer):
+class PytorchDeepFakeRecognizer:
     def __init__(
         self,
-        model_name: str = DEFAULT_DEEPFAKE_MODEL,
+        checkpoint_path: str | os.PathLike[str] | None = None,
         device: int = 0,
         target_label: str = "Deepfake",
-        threshold: float = 0.8,
-        deterministic_weight: float = DEFAULT_DETERMINISTIC_WEIGHT,
-        deterministic_enabled: bool = True,
+        threshold: float | None = None,
     ) -> None:
-        super().__init__(
-            model_name=model_name,
-            device=device,
-            target_label=target_label,
-            threshold=threshold,
-        )
+        self.device = device
+        self.target_label = target_label
+        self._checkpoint_path = Path(checkpoint_path) if checkpoint_path else _default_pt_checkpoint_path()
+        self.model_name = str(self._checkpoint_path)
 
-        env_det_weight = os.getenv("DEEPFAKE_DETERMINISTIC_WEIGHT")
-        if env_det_weight is not None:
-            deterministic_weight = float(env_det_weight)
+        self._torch = None
+        self._model = None
+        self._preprocess = None
+        self._torch_device = None
 
-        self.deterministic_weight = float(np.clip(deterministic_weight, 0.0, 0.9))
-        self.neural_weight = float(np.clip(1.0 - self.deterministic_weight, 0.1, 1.0))
-        self.neural_variant_weights = dict(DEFAULT_NEURAL_VARIANT_WEIGHTS)
+        self.image_size = DEFAULT_PT_IMAGE_SIZE
+        self.normalization_mean = list(DEFAULT_PT_NORMALIZE_MEAN)
+        self.normalization_std = list(DEFAULT_PT_NORMALIZE_STD)
+        self.threshold = float(threshold) if threshold is not None else 0.5
+        self._load_checkpoint(override_threshold=threshold)
 
-        env_neural_priority = os.getenv("DEEPFAKE_NEURAL_PRIORITY_WEIGHT")
-        self.neural_priority_weight = float(
-            np.clip(
-                float(env_neural_priority) if env_neural_priority is not None else DEFAULT_NEURAL_PRIORITY_WEIGHT,
-                0.50,
-                1.00,
-            )
-        )
-
-        env_conflict_threshold = os.getenv("DEEPFAKE_NEURAL_CONFLICT_THRESHOLD")
-        self.neural_conflict_threshold = float(
-            np.clip(
-                float(env_conflict_threshold)
-                if env_conflict_threshold is not None
-                else DEFAULT_NEURAL_CONFLICT_THRESHOLD,
-                0.05,
-                1.00,
-            )
-        )
-
-        env_override_threshold = os.getenv("DEEPFAKE_NEURAL_OVERRIDE_THRESHOLD")
-        self.neural_override_threshold = float(
-            np.clip(
-                float(env_override_threshold)
-                if env_override_threshold is not None
-                else DEFAULT_NEURAL_OVERRIDE_THRESHOLD,
-                0.05,
-                1.00,
-            )
-        )
-
-        env_override_weight = os.getenv("DEEPFAKE_NEURAL_OVERRIDE_WEIGHT")
-        self.neural_override_weight = float(
-            np.clip(
-                float(env_override_weight) if env_override_weight is not None else DEFAULT_NEURAL_OVERRIDE_WEIGHT,
-                0.50,
-                1.00,
-            )
-        )
-
-        env_det_toggle = os.getenv("DEEPFAKE_USE_DETERMINISTIC")
-        if env_det_toggle is not None:
-            deterministic_enabled = env_det_toggle.strip().lower() not in {"0", "false", "no"}
-
-        calibration_path = os.getenv("DETERMINISTIC_CALIBRATION_PATH")
-        deterministic_threshold = float(os.getenv("DETERMINISTIC_THRESHOLD", "0.55"))
-        deterministic_profile = os.getenv("DETERMINISTIC_PROFILE", DEFAULT_ANALYSIS_PROFILE)
-        raw_max_side = os.getenv("DETERMINISTIC_MAX_SIDE")
+    def _load_checkpoint(self, override_threshold: float | None) -> None:
         try:
-            deterministic_max_side = int(raw_max_side) if raw_max_side else None
-        except ValueError:
-            deterministic_max_side = None
+            import torch
+            import torch.nn as nn
+            from torchvision import models as tv_models
+            from torchvision import transforms as tv_transforms
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "PyTorch checkpoint backend requires torch and torchvision to be installed."
+            ) from exc
 
-        self._deterministic_evaluator = (
-            StaticRiskEvaluator(
-                threshold=deterministic_threshold,
-                use_multiview=None,
-                parallel=True,
-                calibration_path=calibration_path,
-                profile=deterministic_profile,
-                max_image_side=deterministic_max_side,
-            )
-            if deterministic_enabled
-            else None
+        if not self._checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint file was not found: {self._checkpoint_path}")
+
+        self._torch_device = (
+            torch.device(f"cuda:{self.device}")
+            if self.device >= 0 and torch.cuda.is_available()
+            else torch.device("cpu")
         )
 
-    def _build_neural_variants(self, image: Image.Image) -> dict[str, Image.Image]:
-        rgb = image.convert("RGB")
-        return {
-            "original": rgb,
-            "autocontrast": ImageOps.autocontrast(rgb, cutoff=1),
-            "equalized": ImageOps.equalize(rgb),
-            "sharpened": rgb.filter(ImageFilter.UnsharpMask(radius=1, percent=130, threshold=2)),
+        payload = torch.load(str(self._checkpoint_path), map_location="cpu")
+
+        metadata: dict[str, Any] = {}
+        if isinstance(payload, dict) and isinstance(payload.get("state_dict"), dict):
+            metadata = payload
+            state_dict = dict(payload["state_dict"])
+        elif isinstance(payload, dict):
+            state_dict = dict(payload)
+        else:
+            raise TypeError("Unsupported checkpoint format. Expected a state_dict mapping.")
+
+        state_dict = {
+            str(key).removeprefix("module."): value
+            for key, value in state_dict.items()
         }
 
-    def _aggregate_variant_score(self, scores: dict[str, float]) -> float:
-        weighted_sum = 0.0
-        weight_sum = 0.0
-        for name, score in scores.items():
-            weight = float(self.neural_variant_weights.get(name, 0.0))
-            weighted_sum += weight * float(score)
-            weight_sum += weight
+        if "image_size" in metadata:
+            try:
+                self.image_size = int(metadata["image_size"])
+            except (TypeError, ValueError):
+                self.image_size = DEFAULT_PT_IMAGE_SIZE
 
-        if weight_sum <= 0.0:
-            if not scores:
-                return 0.0
-            return float(sum(scores.values()) / len(scores))
+        normalization = metadata.get("normalization")
+        if isinstance(normalization, dict):
+            mean = normalization.get("mean")
+            std = normalization.get("std")
+            if isinstance(mean, (list, tuple)) and isinstance(std, (list, tuple)) and len(mean) == 3 and len(std) == 3:
+                self.normalization_mean = [float(v) for v in mean]
+                self.normalization_std = [float(v) for v in std]
 
-        return float(weighted_sum / weight_sum)
+        if override_threshold is None:
+            saved_threshold = metadata.get("threshold")
+            if saved_threshold is not None:
+                try:
+                    self.threshold = float(saved_threshold)
+                except (TypeError, ValueError):
+                    self.threshold = 0.5
 
-    def _run_neural_variant_voting(
-        self,
-        image: Image.Image,
-    ) -> tuple[str, float, list[dict[str, Any]], list[dict[str, Any]]]:
-        variants = self._build_neural_variants(image)
+        model = tv_models.resnet18(weights=None)
+        model.fc = nn.Linear(model.fc.in_features, 1)
+        model.load_state_dict(state_dict)
+        model = model.to(self._torch_device)
+        model.eval()
 
-        variant_scores: dict[str, float] = {}
-        variant_predictions: list[dict[str, Any]] = []
-        base_predictions: list[dict[str, Any]] = []
-        base_label = "unknown"
+        self._preprocess = tv_transforms.Compose(
+            [
+                tv_transforms.Resize((self.image_size, self.image_size)),
+                tv_transforms.ToTensor(),
+                tv_transforms.Normalize(mean=self.normalization_mean, std=self.normalization_std),
+            ]
+        )
 
-        for name, variant in variants.items():
-            predictions = self._predict(variant)
-            label, score = self._select_target_score(predictions)
-            variant_scores[name] = score
-
-            variant_predictions.append(
-                {
-                    "label": f"neural_variant:{name}",
-                    "score": float(score),
-                }
-            )
-
-            if name == "original":
-                base_predictions = predictions
-                base_label = label
-
-        ensemble_score = self._aggregate_variant_score(variant_scores)
-        return base_label, ensemble_score, base_predictions, variant_predictions
-
-    def _run_deterministic_risk(self, image: Image.Image) -> dict[str, Any]:
-        if self._deterministic_evaluator is None:
-            return {"risk": 0.0, "scores": {}}
-
-        try:
-            import cv2
-
-            rgb = np.array(image.convert("RGB"), dtype=np.uint8)
-            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-            result = self._deterministic_evaluator.evaluate(bgr)
-            return {
-                "risk": float(result.get("risk", 0.0)),
-                "scores": dict(result.get("scores", {})),
-            }
-        except Exception:
-            return {"risk": 0.0, "scores": {}}
-
-    def _fuse_scores(self, neural_score: float, deterministic_score: float) -> float:
-        if self._deterministic_evaluator is None:
-            return float(np.clip(neural_score, 0.0, 1.0))
-
-        fused = self.neural_weight * neural_score + self.deterministic_weight * deterministic_score
-
-        # In conflicts, prioritize the neural deepfake detector.
-        disagreement = abs(neural_score - deterministic_score)
-        if disagreement >= self.neural_conflict_threshold:
-            fused = (
-                self.neural_priority_weight * neural_score
-                + (1.0 - self.neural_priority_weight) * deterministic_score
-            )
-
-        # When the neural branch is highly confident, bias harder toward it.
-        if neural_score >= self.neural_override_threshold:
-            override_fused = (
-                self.neural_override_weight * neural_score
-                + (1.0 - self.neural_override_weight) * deterministic_score
-            )
-            fused = max(fused, override_fused)
-
-        return float(np.clip(fused, 0.0, 1.0))
+        self._torch = torch
+        self._model = model
 
     def evaluate(self, image: Image.Image) -> RecognitionDecision:
-        det_future = None
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            if self._deterministic_evaluator is not None:
-                det_future = executor.submit(self._run_deterministic_risk, image.copy())
+        if self._torch is None or self._model is None or self._preprocess is None or self._torch_device is None:
+            raise RuntimeError("PyTorch deepfake recognizer is not initialized.")
 
-            base_label, neural_score, base_predictions, variant_predictions = self._run_neural_variant_voting(image)
+        rgb = crop_face(image)
+        tensor = self._preprocess(rgb).unsqueeze(0).to(self._torch_device)
 
-            deterministic = det_future.result() if det_future is not None else {"risk": 0.0, "scores": {}}
+        with self._torch.no_grad():
+            logits = self._model(tensor).squeeze(1)
+            deepfake_score = float(self._torch.sigmoid(logits)[0].item())
 
-        deterministic_score = float(deterministic.get("risk", 0.0))
-        fused_score = self._fuse_scores(neural_score, deterministic_score)
+        real_score = float(1.0 - deepfake_score)
+        label = self.target_label if deepfake_score >= 0.5 else "Real"
+        should_change = (
+            label.casefold() == self.target_label.casefold()
+            and deepfake_score >= self.threshold
+        )
 
-        final_label = self.target_label if fused_score >= 0.5 else base_label
+        predictions = [
+            {"label": "Real", "score": real_score},
+            {"label": self.target_label, "score": deepfake_score},
+        ]
+
+        return RecognitionDecision(
+            should_change=should_change,
+            label=label,
+            score=deepfake_score,
+            predictions=predictions,
+        )
+
+
+def _default_pt_checkpoint_path() -> Path:
+    return Path(__file__).resolve().parent / DEFAULT_PT_DEEPFAKE_CHECKPOINT
+
+
+def create_deepfake_recognizer(
+    *,
+    checkpoint_path: str | os.PathLike[str] | None = None,
+    device: int = 0,
+    target_label: str = "Deepfake",
+    threshold: float | None = None,
+    **_kwargs: object,
+) -> ImageRecognizer:
+    resolved_checkpoint = Path(checkpoint_path) if checkpoint_path else _default_pt_checkpoint_path()
+    return PytorchDeepFakeRecognizer(
+        checkpoint_path=resolved_checkpoint,
+        device=device,
+        target_label=target_label,
+        threshold=threshold,
+    )
+
+
+class FluxDetector:
+    def __init__(
+        self,
+        model_name: str = DEFAULT_FLUX_MODEL,
+        device: int = 0,
+        target_label: str = DEFAULT_FLUX_TARGET_LABEL,
+        threshold: float = 0.5,
+        id2label: dict[int | str, str] | None = None,
+    ) -> None:
+        self.model_name = model_name
+        self.device = device
+        self.target_label = target_label
+        self.threshold = float(threshold)
+        self.id2label = id2label or {
+            0: "Real_Image",
+            1: DEFAULT_FLUX_TARGET_LABEL,
+        }
+
+        self._torch = None
+        self._processor = None
+        self._model = None
+        self._torch_device = None
+        self._load_model()
+
+    def _label_for_index(self, idx: int) -> str:
+        if idx in self.id2label:
+            return str(self.id2label[idx])
+        key = str(idx)
+        if key in self.id2label:
+            return str(self.id2label[key])
+        return f"class_{idx}"
+
+    def _load_model(self) -> None:
+        try:
+            import torch
+            from transformers import AutoImageProcessor, SiglipForImageClassification
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "FluxDetector requires torch and a recent transformers build with SigLIP support."
+            ) from exc
+
+        self._torch_device = (
+            torch.device(f"cuda:{self.device}")
+            if self.device >= 0 and torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+
+        self._processor = AutoImageProcessor.from_pretrained(self.model_name)
+        self._model = SiglipForImageClassification.from_pretrained(self.model_name)
+        self._model = self._model.to(self._torch_device)
+        self._model.eval()
+        self._torch = torch
+
+    def evaluate(self, image: Image.Image) -> RecognitionDecision:
+        if self._torch is None or self._processor is None or self._model is None or self._torch_device is None:
+            raise RuntimeError("FluxDetector is not initialized.")
+
+        rgb = image.convert("RGB")
+        inputs = self._processor(images=rgb, return_tensors="pt")
+        inputs = {name: tensor.to(self._torch_device) for name, tensor in inputs.items()}
+
+        with self._torch.no_grad():
+            outputs = self._model(**inputs)
+            probs = self._torch.nn.functional.softmax(outputs.logits, dim=1).squeeze(0)
+
+        prob_list = probs.detach().cpu().tolist()
+        predictions = [
+            {
+                "label": self._label_for_index(idx),
+                "score": float(score),
+            }
+            for idx, score in enumerate(prob_list)
+        ]
+
+        target_score = 0.0
+        for pred in predictions:
+            if str(pred["label"]).casefold() == self.target_label.casefold():
+                target_score = float(pred["score"])
+                break
+
+        top_idx = int(probs.argmax().item())
+        top_label = self._label_for_index(top_idx)
+        final_label = self.target_label if target_score >= 0.5 else top_label
 
         should_change = (
             final_label.casefold() == self.target_label.casefold()
-            and fused_score >= self.threshold
+            and target_score >= self.threshold
         )
-
-        predictions: list[dict[str, Any]] = list(base_predictions)
-        predictions.extend(variant_predictions)
-        predictions.append({"label": "neural_ensemble_risk", "score": float(neural_score)})
-
-        if self._deterministic_evaluator is not None:
-            predictions.append({"label": "deterministic_risk", "score": deterministic_score})
-
-            det_scores = deterministic.get("scores", {})
-            if isinstance(det_scores, dict) and det_scores:
-                top_feature = max(det_scores.items(), key=lambda kv: float(kv[1]))
-                predictions.append(
-                    {
-                        "label": "deterministic_top_feature",
-                        "score": float(top_feature[1]),
-                        "feature": str(top_feature[0]),
-                    }
-                )
-
-        predictions.append({"label": "fused_deepfake_risk", "score": float(fused_score)})
 
         return RecognitionDecision(
             should_change=should_change,
             label=final_label,
-            score=float(fused_score),
+            score=target_score,
             predictions=predictions,
         )
+
+
+def create_flux_detector(
+    *,
+    model_name: str = DEFAULT_FLUX_MODEL,
+    device: int = 0,
+    target_label: str = DEFAULT_FLUX_TARGET_LABEL,
+    threshold: float = 0.5,
+    id2label: dict[int | str, str] | None = None,
+) -> FluxDetector:
+    return FluxDetector(
+        model_name=model_name,
+        device=device,
+        target_label=target_label,
+        threshold=threshold,
+        id2label=id2label,
+    )
 
 
 class NsfwRecognizer(_BasePipelineRecognizer):
