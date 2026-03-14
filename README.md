@@ -74,3 +74,19 @@ python .\deterministic_training.py `
 ```
 
 The deterministic runtime uses the `fast` profile by default to keep request latency down. If you train a calibration file, use the same profile and image-size cap in both training and serving so the learned weights match the live feature vectors.
+
+## Using the Calibration File
+
+Copy `deterministic_calibration.json` to your server and set the environment variables before starting the API:
+
+```bash
+export DETERMINISTIC_CALIBRATION_PATH=/path/to/deterministic_calibration.json
+export DETERMINISTIC_PROFILE=fast
+export DETERMINISTIC_MAX_SIDE=512
+export DEEPFAKE_USE_DETERMINISTIC=true
+export DEEPFAKE_DETERMINISTIC_WEIGHT=0.35
+
+uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+This notebook now trains the `fast` profile, so the serving path should use the same profile and resize cap when you deploy the resulting calibration file.
