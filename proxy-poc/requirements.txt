@@ -5,5 +5,10 @@ pillow
 transformers
 numpy
 opencv-python-headless
+matplotlib
 python-multipart
 sklearn
+uvicorn
+recognizers
+torch
+torchvision
