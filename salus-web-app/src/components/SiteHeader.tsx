@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { Separator } from "@/components/ui/separator";
 
 type SiteHeaderProps = {
-    active: "home" | "dashboard";
+    active: "home" | "dashboard" | "analyze";
 };
 
 const today = new Date().toLocaleDateString("en-US", {
@@ -20,23 +20,23 @@ const inactiveLinkClass =
 const SiteHeader = ({ active }: SiteHeaderProps) => {
     return (
         <header className="border-b">
-            <div className="container max-w-6xl mx-auto px-6 py-4">
-                <div className="flex items-center justify-between">
+            <div className="max-w-6xl mx-auto px-6 py-4">
+                <div className="grid grid-cols-3 items-center">
                     <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
                         {today}
                     </span>
                     <Link
                         to="/"
-                        className="text-5xl md:text-6xl font-serif tracking-tight hover:text-accent transition-colors">
+                        className="text-5xl md:text-6xl text-center font-serif tracking-tight hover:text-accent transition-colors">
                         SALUS
                     </Link>
-                    <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-                        Status: <span className="text-foreground">Secure</span>
+                    <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider text-right">
+                        {"FMI{CODES} DEMO"}
                     </span>
                 </div>
             </div>
             <Separator />
-            <div className="container max-w-6xl mx-auto px-6 py-2 flex justify-center gap-8">
+            <div className="max-w-6xl mx-auto px-6 py-2 flex justify-center gap-8">
                 <Link
                     to="/"
                     className={
@@ -52,6 +52,15 @@ const SiteHeader = ({ active }: SiteHeaderProps) => {
                             : inactiveLinkClass
                     }>
                     The Ledger
+                </Link>
+                <Link
+                    to="/analyze"
+                    className={
+                        active === "analyze"
+                            ? activeLinkClass
+                            : inactiveLinkClass
+                    }>
+                    Try It
                 </Link>
             </div>
         </header>
