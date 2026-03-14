@@ -27,7 +27,7 @@ class _FakePipe:
 class TestHybridRiskPipeline(unittest.TestCase):
     def test_static_evaluator_multiview_has_extended_features(self) -> None:
         frame = np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8)
-        evaluator = StaticRiskEvaluator(use_multiview=True, parallel=True)
+        evaluator = StaticRiskEvaluator(use_multiview=True, parallel=True, profile="full")
         result = evaluator.evaluate(frame)
 
         scores = result["scores"]
@@ -41,6 +41,22 @@ class TestHybridRiskPipeline(unittest.TestCase):
 
         self.assertGreaterEqual(result["risk"], 0.0)
         self.assertLessEqual(result["risk"], 1.0)
+
+    def test_static_evaluator_fast_profile_skips_slowest_metrics(self) -> None:
+        frame = np.random.randint(0, 255, (720, 1280, 3), dtype=np.uint8)
+        evaluator = StaticRiskEvaluator(profile="fast", parallel=False)
+        result = evaluator.evaluate(frame)
+
+        scores = result["scores"]
+        self.assertIn("dft", scores)
+        self.assertIn("edge_ringing", scores)
+        self.assertNotIn("fft", scores)
+        self.assertNotIn("hist", scores)
+        self.assertNotIn("noise_residual", scores)
+
+        for score in scores.values():
+            self.assertGreaterEqual(score, 0.0)
+            self.assertLessEqual(score, 1.0)
 
     def test_deepfake_recognizer_fuses_neural_and_deterministic(self) -> None:
         image = Image.fromarray(np.random.randint(0, 255, (128, 128, 3), dtype=np.uint8), mode="RGB")

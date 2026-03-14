@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 from transformers import pipeline
 
-from deterministic_analysis import StaticRiskEvaluator
+from deterministic_analysis import DEFAULT_ANALYSIS_PROFILE, StaticRiskEvaluator
 
 
 DEFAULT_DEEPFAKE_MODEL = "prithivMLmods/Deep-Fake-Detector-v2-Model"
@@ -117,13 +117,21 @@ class DeepFakeRecognizer(_BasePipelineRecognizer):
 
         calibration_path = os.getenv("DETERMINISTIC_CALIBRATION_PATH")
         deterministic_threshold = float(os.getenv("DETERMINISTIC_THRESHOLD", "0.55"))
+        deterministic_profile = os.getenv("DETERMINISTIC_PROFILE", DEFAULT_ANALYSIS_PROFILE)
+        raw_max_side = os.getenv("DETERMINISTIC_MAX_SIDE")
+        try:
+            deterministic_max_side = int(raw_max_side) if raw_max_side else None
+        except ValueError:
+            deterministic_max_side = None
 
         self._deterministic_evaluator = (
             StaticRiskEvaluator(
                 threshold=deterministic_threshold,
-                use_multiview=True,
+                use_multiview=None,
                 parallel=True,
                 calibration_path=calibration_path,
+                profile=deterministic_profile,
+                max_image_side=deterministic_max_side,
             )
             if deterministic_enabled
             else None

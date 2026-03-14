@@ -4,14 +4,18 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Dict, Mapping
+from typing import Callable, Dict, Iterable, Mapping
 
 import cv2
 import numpy as np
 
 
 AnalyzerFn = Callable[[np.ndarray], float]
+
+
+DEFAULT_ANALYSIS_PROFILE = "fast"
 
 
 def _soft_two_tailed_score(
@@ -60,6 +64,47 @@ def _center_crop_region(bgr: np.ndarray) -> tuple[int, int, int, int]:
     return margin_y, h - margin_y, margin_x, w - margin_x
 
 
+def _resize_for_analysis(bgr: np.ndarray, max_image_side: int | None) -> np.ndarray:
+    if max_image_side is None or max_image_side <= 0:
+        return bgr
+
+    h, w = bgr.shape[:2]
+    longest_side = max(h, w)
+    if longest_side <= max_image_side:
+        return bgr
+
+    scale = float(max_image_side) / float(longest_side)
+    resized_width = max(1, int(round(w * scale)))
+    resized_height = max(1, int(round(h * scale)))
+    return cv2.resize(bgr, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+
+
+@lru_cache(maxsize=16)
+def _high_frequency_mask(shape: tuple[int, int]) -> np.ndarray:
+    h, w = shape
+    cy, cx = h // 2, w // 2
+    y_grid, x_grid = np.ogrid[:h, :w]
+    dist = np.sqrt((x_grid - cx) ** 2 + (y_grid - cy) ** 2)
+    max_dist = np.sqrt(cx ** 2 + cy ** 2)
+    return dist > 0.6 * max_dist
+
+
+@lru_cache(maxsize=16)
+def _fft_sector_masks(shape: tuple[int, int], num_sectors: int = 8) -> tuple[np.ndarray, ...]:
+    h, w = shape
+    cy, cx = h // 2, w // 2
+    y_grid, x_grid = np.ogrid[:h, :w]
+    angles = np.arctan2(y_grid - cy, x_grid - cx)
+
+    masks = []
+    for i in range(num_sectors):
+        lo = -np.pi + i * (2.0 * np.pi / num_sectors)
+        hi = lo + (2.0 * np.pi / num_sectors)
+        masks.append((angles >= lo) & (angles < hi))
+
+    return tuple(masks)
+
+
 def analyze_laplacian(bgr: np.ndarray) -> float:
     """
     Blur/oversharpening signal from Laplacian variance.
@@ -100,12 +145,7 @@ def analyze_dft(bgr: np.ndarray) -> float:
     dft_shift = np.fft.fftshift(dft[:, :, 0] + 1j * dft[:, :, 1])
     magnitude = np.abs(dft_shift)
 
-    h, w = magnitude.shape
-    cy, cx = h // 2, w // 2
-    y_grid, x_grid = np.ogrid[:h, :w]
-    dist = np.sqrt((x_grid - cx) ** 2 + (y_grid - cy) ** 2)
-    max_dist = np.sqrt(cx ** 2 + cy ** 2)
-    hf_mask = dist > 0.6 * max_dist
+    hf_mask = _high_frequency_mask(magnitude.shape)
 
     hf_energy = float(magnitude[hf_mask].sum())
     total_energy = float(magnitude.sum()) + 1e-9
@@ -123,17 +163,8 @@ def analyze_fft(bgr: np.ndarray) -> float:
     fshift = np.fft.fftshift(f)
     magnitude = np.abs(fshift)
 
-    h, w = magnitude.shape
-    cy, cx = h // 2, w // 2
-    num_sectors = 8
     sector_energies = []
-    y_grid, x_grid = np.ogrid[:h, :w]
-    angles = np.arctan2(y_grid - cy, x_grid - cx)
-
-    for i in range(num_sectors):
-        lo = -np.pi + i * (2.0 * np.pi / num_sectors)
-        hi = lo + (2.0 * np.pi / num_sectors)
-        sector_mask = (angles >= lo) & (angles < hi)
+    for sector_mask in _fft_sector_masks(magnitude.shape):
         sector_energies.append(float(magnitude[sector_mask].mean()))
 
     sectors = np.array(sector_energies, dtype=np.float32)
@@ -151,16 +182,13 @@ def analyze_hist(bgr: np.ndarray) -> float:
 
     bg_mask = np.ones((h, w), dtype=np.uint8)
     bg_mask[y0:y1, x0:x1] = 0
-    background = bgr[bg_mask == 1].reshape(-1, 1, 3)
-    if background.shape[0] < 100:
+    if int(bg_mask.sum()) < 100:
         return 0.0
 
     distances = []
     for ch in range(3):
         h_face = cv2.calcHist([face_region], [ch], None, [64], [0, 256])
-        bg_img = bgr.copy()
-        bg_img[bg_mask == 0] = 0
-        h_bg = cv2.calcHist([bg_img], [ch], bg_mask, [64], [0, 256])
+        h_bg = cv2.calcHist([bgr], [ch], bg_mask, [64], [0, 256])
 
         cv2.normalize(h_face, h_face)
         cv2.normalize(h_bg, h_bg)
@@ -328,6 +356,51 @@ DEFAULT_VARIANT_WEIGHTS: Dict[str, float] = {
 }
 
 
+ANALYZER_PROFILES: Dict[str, tuple[str, ...]] = {
+    "fast": (
+        "laplacian",
+        "sobel",
+        "dft",
+        "hsv_skin",
+        "jpeg_blocking",
+        "edge_ringing",
+        "texture_inconsistency",
+    ),
+    "balanced": (
+        "laplacian",
+        "sobel",
+        "dft",
+        "hist",
+        "hsv_skin",
+        "jpeg_blocking",
+        "edge_ringing",
+        "texture_inconsistency",
+    ),
+    "full": tuple(ANALYZERS.keys()),
+}
+
+
+PROFILE_VARIANT_WEIGHTS: Dict[str, Dict[str, float]] = {
+    "fast": {
+        "original": 0.78,
+        "clahe": 0.22,
+    },
+    "balanced": {
+        "original": 0.65,
+        "clahe": 0.20,
+        "sharpened": 0.15,
+    },
+    "full": dict(DEFAULT_VARIANT_WEIGHTS),
+}
+
+
+PROFILE_MAX_IMAGE_SIDE: Dict[str, int] = {
+    "fast": 512,
+    "balanced": 640,
+    "full": 768,
+}
+
+
 @dataclass(frozen=True)
 class CalibrationConfig:
     feature_order: tuple[str, ...]
@@ -336,6 +409,29 @@ class CalibrationConfig:
     means: np.ndarray | None
     scales: np.ndarray | None
     threshold: float | None
+    profile: str | None
+    variant_weights: dict[str, float] | None
+    max_image_side: int | None
+
+
+def resolve_analysis_profile(profile: str | None) -> str:
+    normalized = str(profile or DEFAULT_ANALYSIS_PROFILE).strip().lower()
+    if normalized in ANALYZER_PROFILES:
+        return normalized
+    return DEFAULT_ANALYSIS_PROFILE
+
+
+def get_profile_feature_names(profile: str | None) -> tuple[str, ...]:
+    return ANALYZER_PROFILES[resolve_analysis_profile(profile)]
+
+
+def get_profile_variant_weights(profile: str | None) -> Dict[str, float]:
+    resolved = resolve_analysis_profile(profile)
+    return dict(PROFILE_VARIANT_WEIGHTS[resolved])
+
+
+def get_profile_max_image_side(profile: str | None) -> int:
+    return int(PROFILE_MAX_IMAGE_SIDE[resolve_analysis_profile(profile)])
 
 
 def load_calibration(calibration_path: str | None) -> CalibrationConfig | None:
@@ -367,6 +463,30 @@ def load_calibration(calibration_path: str | None) -> CalibrationConfig | None:
     threshold_raw = payload.get("threshold")
     threshold = float(threshold_raw) if threshold_raw is not None else None
 
+    profile_raw = payload.get("profile")
+    profile = str(profile_raw).strip().lower() if isinstance(profile_raw, str) else None
+    if profile not in ANALYZER_PROFILES:
+        profile = None
+
+    raw_variant_weights = payload.get("variant_weights")
+    if isinstance(raw_variant_weights, dict):
+        variant_weights = {
+            str(name): float(value)
+            for name, value in raw_variant_weights.items()
+            if str(name) in DEFAULT_VARIANT_WEIGHTS
+        }
+    else:
+        variant_weights = None
+
+    raw_max_image_side = payload.get("max_image_side")
+    if raw_max_image_side is None:
+        max_image_side = None
+    else:
+        try:
+            max_image_side = max(1, int(raw_max_image_side))
+        except (TypeError, ValueError):
+            max_image_side = None
+
     return CalibrationConfig(
         feature_order=feature_order,
         weights=weights,
@@ -374,6 +494,9 @@ def load_calibration(calibration_path: str | None) -> CalibrationConfig | None:
         means=means,
         scales=scales,
         threshold=threshold,
+        profile=profile,
+        variant_weights=variant_weights,
+        max_image_side=max_image_side,
     )
 
 
@@ -395,27 +518,45 @@ def _safe_run_analyzer(name: str, fn: AnalyzerFn, bgr: np.ndarray) -> tuple[str,
         return name, 0.0
 
 
+def _select_analyzers(feature_names: Iterable[str] | None) -> Dict[str, AnalyzerFn]:
+    if feature_names is None:
+        return dict(ANALYZERS)
+
+    selected: Dict[str, AnalyzerFn] = {}
+    for name in feature_names:
+        analyzer = ANALYZERS.get(str(name))
+        if analyzer is not None and str(name) not in selected:
+            selected[str(name)] = analyzer
+
+    return selected
+
+
 def run_all_analyzers(
     bgr: np.ndarray,
     parallel: bool = True,
     max_workers: int | None = None,
+    feature_names: Iterable[str] | None = None,
 ) -> Dict[str, float]:
     """
     Run every static analyzer and return analyzer_name -> score.
     """
+    analyzers = _select_analyzers(feature_names)
+    if not analyzers:
+        return {}
+
     if not parallel:
         return {
             name: _safe_run_analyzer(name, fn, bgr)[1]
-            for name, fn in ANALYZERS.items()
+            for name, fn in analyzers.items()
         }
 
-    workers = max_workers or _default_workers(len(ANALYZERS))
+    workers = max_workers or _default_workers(len(analyzers))
     results: Dict[str, float] = {}
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(_safe_run_analyzer, name, fn, bgr): name
-            for name, fn in ANALYZERS.items()
+            for name, fn in analyzers.items()
         }
         for future in as_completed(futures):
             name, value = future.result()
@@ -424,25 +565,43 @@ def run_all_analyzers(
     return results
 
 
-def build_image_variants(bgr: np.ndarray) -> Dict[str, np.ndarray]:
+def build_image_variants(
+    bgr: np.ndarray,
+    variant_names: Iterable[str] | None = None,
+) -> Dict[str, np.ndarray]:
     """
     Build deterministic-friendly filtered variants for robust scoring.
     """
-    variants: Dict[str, np.ndarray] = {"original": bgr}
+    requested = []
+    for name in variant_names or DEFAULT_VARIANT_WEIGHTS.keys():
+        normalized = str(name)
+        if normalized not in requested and normalized in DEFAULT_VARIANT_WEIGHTS:
+            requested.append(normalized)
 
-    denoised = cv2.bilateralFilter(bgr, d=7, sigmaColor=50, sigmaSpace=50)
-    variants["denoised"] = denoised
+    if not requested:
+        requested = ["original"]
 
-    blurred = cv2.GaussianBlur(bgr, (0, 0), 1.0)
-    sharpened = cv2.addWeighted(bgr, 1.35, blurred, -0.35, 0)
-    variants["sharpened"] = np.clip(sharpened, 0, 255).astype(np.uint8)
+    variants: Dict[str, np.ndarray] = {}
 
-    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
-    l_channel, a_channel, b_channel = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    l_eq = clahe.apply(l_channel)
-    clahe_bgr = cv2.cvtColor(cv2.merge([l_eq, a_channel, b_channel]), cv2.COLOR_LAB2BGR)
-    variants["clahe"] = clahe_bgr
+    if "original" in requested:
+        variants["original"] = bgr
+
+    if "denoised" in requested:
+        denoised = cv2.bilateralFilter(bgr, d=7, sigmaColor=50, sigmaSpace=50)
+        variants["denoised"] = denoised
+
+    if "sharpened" in requested:
+        blurred = cv2.GaussianBlur(bgr, (0, 0), 1.0)
+        sharpened = cv2.addWeighted(bgr, 1.35, blurred, -0.35, 0)
+        variants["sharpened"] = np.clip(sharpened, 0, 255).astype(np.uint8)
+
+    if "clahe" in requested:
+        lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l_eq = clahe.apply(l_channel)
+        clahe_bgr = cv2.cvtColor(cv2.merge([l_eq, a_channel, b_channel]), cv2.COLOR_LAB2BGR)
+        variants["clahe"] = clahe_bgr
 
     return variants
 
@@ -465,12 +624,17 @@ def run_multiview_analyzers(
     variant_weights: Mapping[str, float] = DEFAULT_VARIANT_WEIGHTS,
     parallel: bool = True,
     max_workers: int | None = None,
+    feature_names: Iterable[str] | None = None,
+    max_image_side: int | None = None,
 ) -> Dict[str, float]:
     """
     Run analyzers across filtered views and aggregate feature-wise scores.
     """
-    variants = build_image_variants(bgr)
+    prepared = _resize_for_analysis(bgr, max_image_side)
+    variant_names = tuple(str(name) for name in variant_weights.keys())
+    variants = build_image_variants(prepared, variant_names=variant_names)
     weights = _normalize_weights({name: variant_weights.get(name, 0.0) for name in variants})
+    selected_features = tuple(_select_analyzers(feature_names).keys())
 
     if not weights:
         weights = {name: 1.0 / len(variants) for name in variants}
@@ -481,7 +645,7 @@ def run_multiview_analyzers(
         workers = max_workers or _default_workers(len(variants))
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
-                executor.submit(run_all_analyzers, img, False, None): name
+                executor.submit(run_all_analyzers, img, False, None, selected_features): name
                 for name, img in variants.items()
             }
             for future in as_completed(futures):
@@ -489,10 +653,14 @@ def run_multiview_analyzers(
                 per_variant_scores[name] = future.result()
     else:
         for name, image in variants.items():
-            per_variant_scores[name] = run_all_analyzers(image, parallel=False)
+            per_variant_scores[name] = run_all_analyzers(
+                image,
+                parallel=False,
+                feature_names=selected_features,
+            )
 
     aggregated: Dict[str, float] = {}
-    for feature in ANALYZERS:
+    for feature in selected_features or tuple(ANALYZERS.keys()):
         weighted_sum = 0.0
         weight_sum = 0.0
         for variant_name, scores in per_variant_scores.items():
@@ -525,17 +693,47 @@ class StaticRiskEvaluator:
         self,
         threshold: float = 0.55,
         weights: Mapping[str, float] | None = None,
-        use_multiview: bool = True,
+        use_multiview: bool | None = None,
         parallel: bool = True,
         max_workers: int | None = None,
         calibration_path: str | None = None,
+        profile: str | None = None,
+        feature_names: Iterable[str] | None = None,
+        variant_weights: Mapping[str, float] | None = None,
+        max_image_side: int | None = None,
     ):
         self.threshold = float(threshold)
         self.weights = dict(weights) if weights is not None else dict(DEFAULT_WEIGHTS)
-        self.use_multiview = bool(use_multiview)
         self.parallel = bool(parallel)
         self.max_workers = max_workers
         self.calibration = load_calibration(calibration_path)
+
+        calibration_profile = self.calibration.profile if self.calibration is not None else None
+        self.profile = resolve_analysis_profile(profile or calibration_profile)
+
+        calibration_features = self.calibration.feature_order if self.calibration is not None else None
+        resolved_features = feature_names or calibration_features or get_profile_feature_names(self.profile)
+        self.feature_names = tuple(_select_analyzers(resolved_features).keys())
+
+        calibration_variant_weights = self.calibration.variant_weights if self.calibration is not None else None
+        self.variant_weights = dict(
+            variant_weights
+            if variant_weights is not None
+            else calibration_variant_weights
+            if calibration_variant_weights is not None
+            else get_profile_variant_weights(self.profile)
+        )
+
+        calibration_max_side = self.calibration.max_image_side if self.calibration is not None else None
+        self.max_image_side = (
+            int(max_image_side)
+            if max_image_side is not None
+            else int(calibration_max_side)
+            if calibration_max_side is not None
+            else get_profile_max_image_side(self.profile)
+        )
+
+        self.use_multiview = bool(use_multiview) if use_multiview is not None else len(self.variant_weights) > 1
 
         if self.calibration and self.calibration.threshold is not None:
             self.decision_threshold = float(self.calibration.threshold)
@@ -546,12 +744,20 @@ class StaticRiskEvaluator:
         if self.use_multiview:
             scores = run_multiview_analyzers(
                 bgr,
-                variant_weights=DEFAULT_VARIANT_WEIGHTS,
+                variant_weights=self.variant_weights,
                 parallel=self.parallel,
                 max_workers=self.max_workers,
+                feature_names=self.feature_names,
+                max_image_side=self.max_image_side,
             )
         else:
-            scores = run_all_analyzers(bgr, parallel=self.parallel, max_workers=self.max_workers)
+            prepared = _resize_for_analysis(bgr, self.max_image_side)
+            scores = run_all_analyzers(
+                prepared,
+                parallel=self.parallel,
+                max_workers=self.max_workers,
+                feature_names=self.feature_names,
+            )
 
         if self.calibration is not None:
             risk = calibrate_risk(scores, self.calibration)
@@ -579,11 +785,15 @@ if __name__ == "__main__":
         frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
 
     calibration_path = os.getenv("DETERMINISTIC_CALIBRATION_PATH")
+    runtime_profile = os.getenv("DETERMINISTIC_PROFILE", DEFAULT_ANALYSIS_PROFILE)
+    runtime_max_side = os.getenv("DETERMINISTIC_MAX_SIDE")
     evaluator = StaticRiskEvaluator(
         threshold=0.55,
-        use_multiview=True,
+        use_multiview=None,
         parallel=True,
         calibration_path=calibration_path,
+        profile=runtime_profile,
+        max_image_side=int(runtime_max_side) if runtime_max_side else None,
     )
     result = evaluator.evaluate(frame)
 
@@ -594,4 +804,6 @@ if __name__ == "__main__":
     print(f"\n  Aggregate Risk : {result['risk']:.3f}")
     print(f"  Is Deepfake    : {result['is_deepfake']}")
     print(f"  Threshold      : {result['threshold']}")
+    print(f"  Profile        : {evaluator.profile}")
+    print(f"  Max Image Side : {evaluator.max_image_side}")
     print("---------------------------------------------\n")

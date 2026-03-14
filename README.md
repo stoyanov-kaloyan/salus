@@ -51,6 +51,10 @@ python -m unittest tests/test_deepfake_recognizer_gpu_integration.py
 python .\deterministic_analysis.py .\test_images\real1.jpg
 python .\deterministic_analysis.py .\test_images\deepfake1.png
 
+# Runtime profile controls (default profile is now "fast")
+$env:DETERMINISTIC_PROFILE = "fast"      # fast | balanced | full
+$env:DETERMINISTIC_MAX_SIDE = "512"      # resize cap before deterministic analysis
+
 # Use a trained calibration file
 $env:DETERMINISTIC_CALIBRATION_PATH = ".\deterministic_calibration.json"
 python .\deterministic_analysis.py .\test_images\real1.jpg
@@ -63,7 +67,10 @@ python .\deterministic_analysis.py .\test_images\real1.jpg
 python .\deterministic_training.py `
   --manifest .\manifest.csv `
   --output .\deterministic_calibration.json `
+  --profile fast `
   --epochs 1200 `
   --validation-fraction 0.20 `
   --max-workers 4
 ```
+
+The deterministic runtime uses the `fast` profile by default to keep request latency down. If you train a calibration file, use the same profile and image-size cap in both training and serving so the learned weights match the live feature vectors.

@@ -6,12 +6,20 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Mapping
 
 import cv2
 import numpy as np
 
-from deterministic_analysis import ANALYZERS, run_multiview_analyzers
+from deterministic_analysis import (
+    ANALYZER_PROFILES,
+    DEFAULT_ANALYSIS_PROFILE,
+    get_profile_feature_names,
+    get_profile_max_image_side,
+    get_profile_variant_weights,
+    resolve_analysis_profile,
+    run_multiview_analyzers,
+)
 
 
 @dataclass(frozen=True)
@@ -60,12 +68,23 @@ def load_manifest(manifest_path: Path) -> list[LabeledImage]:
     return rows
 
 
-def _extract_feature_vector(sample: LabeledImage, feature_order: list[str]) -> tuple[np.ndarray, int]:
+def _extract_feature_vector(
+    sample: LabeledImage,
+    feature_order: list[str],
+    variant_weights: Mapping[str, float],
+    max_image_side: int,
+) -> tuple[np.ndarray, int]:
     image = cv2.imread(str(sample.path))
     if image is None:
         raise ValueError(f"Could not read image: {sample.path}")
 
-    scores = run_multiview_analyzers(image, parallel=True)
+    scores = run_multiview_analyzers(
+        image,
+        variant_weights=variant_weights,
+        parallel=True,
+        feature_names=feature_order,
+        max_image_side=max_image_side,
+    )
     vector = np.array([float(scores.get(name, 0.0)) for name in feature_order], dtype=np.float32)
     return vector, sample.label
 
@@ -74,6 +93,8 @@ def extract_dataset(
     samples: list[LabeledImage],
     feature_order: list[str],
     max_workers: int,
+    variant_weights: Mapping[str, float],
+    max_image_side: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     vectors: list[np.ndarray] = []
     labels: list[int] = []
@@ -81,7 +102,13 @@ def extract_dataset(
     workers = max(1, min(max_workers, len(samples)))
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(_extract_feature_vector, sample, feature_order): sample
+            executor.submit(
+                _extract_feature_vector,
+                sample,
+                feature_order,
+                variant_weights,
+                max_image_side,
+            ): sample
             for sample in samples
         }
         for future in as_completed(futures):
@@ -191,6 +218,9 @@ def save_calibration(
     metrics: dict[str, float],
     train_size: int,
     validation_size: int,
+    profile: str,
+    variant_weights: Mapping[str, float],
+    max_image_side: int,
 ) -> None:
     payload = {
         "feature_order": feature_order,
@@ -202,6 +232,9 @@ def save_calibration(
         "metrics": {k: float(v) for k, v in metrics.items()},
         "train_size": int(train_size),
         "validation_size": int(validation_size),
+        "profile": str(profile),
+        "variant_weights": {k: float(v) for k, v in variant_weights.items()},
+        "max_image_side": int(max_image_side),
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,6 +250,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--l2", type=float, default=0.001, help="L2 regularization")
     parser.add_argument("--validation-fraction", type=float, default=0.20, help="Validation split fraction")
     parser.add_argument("--max-workers", type=int, default=4, help="Parallel workers for feature extraction")
+    parser.add_argument(
+        "--profile",
+        default=DEFAULT_ANALYSIS_PROFILE,
+        choices=tuple(sorted(ANALYZER_PROFILES.keys())),
+        help="Deterministic analyzer profile to train for",
+    )
+    parser.add_argument(
+        "--max-image-side",
+        type=int,
+        default=None,
+        help="Override the profile default resize cap before deterministic analysis",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     return parser.parse_args()
 
@@ -226,10 +271,19 @@ def main() -> None:
 
     manifest_path = Path(args.manifest).resolve()
     output_path = Path(args.output).resolve()
+    profile = resolve_analysis_profile(args.profile)
+    feature_order = list(get_profile_feature_names(profile))
+    variant_weights = get_profile_variant_weights(profile)
+    max_image_side = int(args.max_image_side) if args.max_image_side else get_profile_max_image_side(profile)
 
     samples = load_manifest(manifest_path)
-    feature_order = list(ANALYZERS.keys())
-    x, y = extract_dataset(samples, feature_order, max_workers=args.max_workers)
+    x, y = extract_dataset(
+        samples,
+        feature_order,
+        max_workers=args.max_workers,
+        variant_weights=variant_weights,
+        max_image_side=max_image_side,
+    )
 
     x_train, y_train, x_val, y_val = split_train_validation(
         x,
@@ -267,9 +321,15 @@ def main() -> None:
         metrics=metrics,
         train_size=x_train.shape[0],
         validation_size=x_val.shape[0],
+        profile=profile,
+        variant_weights=variant_weights,
+        max_image_side=max_image_side,
     )
 
     print("Calibration written:", output_path)
+    print("Profile:", profile)
+    print("Features:", ", ".join(feature_order))
+    print("Max image side:", max_image_side)
     print("Validation metrics:", metrics)
     print("Recommended threshold:", round(threshold, 4))
 
