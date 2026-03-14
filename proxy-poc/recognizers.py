@@ -11,6 +11,8 @@ from transformers import pipeline
 
 
 DEFAULT_NSFW_MODEL = "Falconsai/nsfw_image_detection"
+DEFAULT_FLUX_MODEL = "prithivMLmods/OpenSDI-Flux.1-SigLIP2"
+DEFAULT_FLUX_TARGET_LABEL = "Flux.1_Generated"
 DEFAULT_PT_DEEPFAKE_CHECKPOINT = "deepfake_resnet18_best.pt"
 DEFAULT_PT_IMAGE_SIZE = 224
 DEFAULT_PT_NORMALIZE_MEAN = (0.485, 0.456, 0.406)
@@ -282,6 +284,120 @@ def create_deepfake_recognizer(
         device=device,
         target_label=target_label,
         threshold=threshold,
+    )
+
+
+class FluxDetector:
+    def __init__(
+        self,
+        model_name: str = DEFAULT_FLUX_MODEL,
+        device: int = 0,
+        target_label: str = DEFAULT_FLUX_TARGET_LABEL,
+        threshold: float = 0.5,
+        id2label: dict[int | str, str] | None = None,
+    ) -> None:
+        self.model_name = model_name
+        self.device = device
+        self.target_label = target_label
+        self.threshold = float(threshold)
+        self.id2label = id2label or {
+            0: "Real_Image",
+            1: DEFAULT_FLUX_TARGET_LABEL,
+        }
+
+        self._torch = None
+        self._processor = None
+        self._model = None
+        self._torch_device = None
+        self._load_model()
+
+    def _label_for_index(self, idx: int) -> str:
+        if idx in self.id2label:
+            return str(self.id2label[idx])
+        key = str(idx)
+        if key in self.id2label:
+            return str(self.id2label[key])
+        return f"class_{idx}"
+
+    def _load_model(self) -> None:
+        try:
+            import torch
+            from transformers import AutoImageProcessor, SiglipForImageClassification
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "FluxDetector requires torch and a recent transformers build with SigLIP support."
+            ) from exc
+
+        self._torch_device = (
+            torch.device(f"cuda:{self.device}")
+            if self.device >= 0 and torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+
+        self._processor = AutoImageProcessor.from_pretrained(self.model_name)
+        self._model = SiglipForImageClassification.from_pretrained(self.model_name)
+        self._model = self._model.to(self._torch_device)
+        self._model.eval()
+        self._torch = torch
+
+    def evaluate(self, image: Image.Image) -> RecognitionDecision:
+        if self._torch is None or self._processor is None or self._model is None or self._torch_device is None:
+            raise RuntimeError("FluxDetector is not initialized.")
+
+        rgb = image.convert("RGB")
+        inputs = self._processor(images=rgb, return_tensors="pt")
+        inputs = {name: tensor.to(self._torch_device) for name, tensor in inputs.items()}
+
+        with self._torch.no_grad():
+            outputs = self._model(**inputs)
+            probs = self._torch.nn.functional.softmax(outputs.logits, dim=1).squeeze(0)
+
+        prob_list = probs.detach().cpu().tolist()
+        predictions = [
+            {
+                "label": self._label_for_index(idx),
+                "score": float(score),
+            }
+            for idx, score in enumerate(prob_list)
+        ]
+
+        target_score = 0.0
+        for pred in predictions:
+            if str(pred["label"]).casefold() == self.target_label.casefold():
+                target_score = float(pred["score"])
+                break
+
+        top_idx = int(probs.argmax().item())
+        top_label = self._label_for_index(top_idx)
+        final_label = self.target_label if target_score >= 0.5 else top_label
+
+        should_change = (
+            final_label.casefold() == self.target_label.casefold()
+            and target_score >= self.threshold
+        )
+
+        return RecognitionDecision(
+            should_change=should_change,
+            label=final_label,
+            score=target_score,
+            predictions=predictions,
+        )
+
+
+def create_flux_detector(
+    *,
+    model_name: str = DEFAULT_FLUX_MODEL,
+    device: int = 0,
+    target_label: str = DEFAULT_FLUX_TARGET_LABEL,
+    threshold: float = 0.5,
+    id2label: dict[int | str, str] | None = None,
+) -> FluxDetector:
+    return FluxDetector(
+        model_name=model_name,
+        device=device,
+        target_label=target_label,
+        threshold=threshold,
+        id2label=id2label,
     )
 
 

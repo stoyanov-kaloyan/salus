@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from PIL import Image
 import os
 
-from recognizers import NsfwRecognizer, create_deepfake_recognizer
+from recognizers import NsfwRecognizer, create_deepfake_recognizer, create_flux_detector
 
 models = {}
 
@@ -16,10 +16,18 @@ async def lifespan(app: FastAPI):
     checkpoint_path = os.getenv("DEEPFAKE_PT_CHECKPOINT_PATH")
     threshold_raw = os.getenv("DEEPFAKE_THRESHOLD")
     threshold = float(threshold_raw) if threshold_raw is not None else None
+    flux_threshold = float(os.getenv("FLUX_THRESHOLD", "0.5"))
+    flux_device = int(os.getenv("FLUX_DEVICE", "0"))
+    flux_model_name = os.getenv("FLUX_MODEL_NAME", "prithivMLmods/OpenSDI-Flux.1-SigLIP2")
     models['deepfake'] = create_deepfake_recognizer(
         backend=backend,
         checkpoint_path=checkpoint_path,
         threshold=threshold,
+    )
+    models['flux'] = create_flux_detector(
+        model_name=flux_model_name,
+        device=flux_device,
+        threshold=flux_threshold,
     )
     models['nsfw'] = NsfwRecognizer()
     yield
@@ -42,6 +50,12 @@ async def detect_image_deepfake(file: UploadFile = File(...)):
 async def detect_image_nsfw(file: UploadFile = File(...)):
     """Analyze an image for NSFW content."""
     return await _process_image(file, models['nsfw'])
+
+
+@app.post("/detect/image/flux", response_model=DetectionResult)
+async def detect_image_flux(file: UploadFile = File(...)):
+    """Analyze an image for Flux.1-generated content."""
+    return await _process_image(file, models['flux'])
 
 async def _process_image(file: UploadFile, recognizer) -> DetectionResult:
     """Helper function to read the image and run the model."""
