@@ -11,8 +11,8 @@ format:
     slide-number: true
     transition: fade
     center: false
-    footer: "SALUS · FMI{CODES}"
-    logo: "../salus-web-app/public/logo.png"
+    footer: "SALUS · FMI{CODES} 2026"
+    logo: "../salus-web-app/public/logo4.png"
 execute:
   enabled: false
 ---
