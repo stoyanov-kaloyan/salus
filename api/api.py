@@ -5,7 +5,7 @@ import io
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from PIL import Image
@@ -14,6 +14,7 @@ import os
 import env_loader
 from recognizers import NsfwRecognizer, create_deepfake_recognizer, create_flux_detector
 import stats_service
+import event_batcher
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,9 @@ async def lifespan(app: FastAPI):
         threshold=flux_threshold,
     )
     models['nsfw'] = NsfwRecognizer()
+    event_batcher.start()
     yield
+    event_batcher.stop()
     models.clear()
 
 app = FastAPI(title="Content Moderation API", lifespan=lifespan)
@@ -89,13 +92,11 @@ class MultiDetectionResult(BaseModel):
 @app.post("/detect/image/deepfake", response_model=DetectionResult)
 async def detect_image_deepfake(
     file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Analyze an image for Deepfakes."""
     contents, image_hash = await _read_and_hash(file)
     result = await _process_image_from_bytes(Image.open(io.BytesIO(contents)).convert("RGB"), models['deepfake'])
-    background_tasks.add_task(
-        stats_service.log_detection_event,
+    event_batcher.enqueue(dict(
         recognizer="deepfake",
         endpoint="/detect/image/deepfake",
         image_hash=image_hash,
@@ -103,19 +104,17 @@ async def detect_image_deepfake(
         label=result.label,
         score=result.score,
         all_predictions=result.all_predictions,
-    )
+    ))
     return result
 
 @app.post("/detect/image/nsfw", response_model=DetectionResult)
 async def detect_image_nsfw(
     file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Analyze an image for NSFW content."""
     contents, image_hash = await _read_and_hash(file)
     result = await _process_image_from_bytes(Image.open(io.BytesIO(contents)).convert("RGB"), models['nsfw'])
-    background_tasks.add_task(
-        stats_service.log_detection_event,
+    event_batcher.enqueue(dict(
         recognizer="nsfw",
         endpoint="/detect/image/nsfw",
         image_hash=image_hash,
@@ -123,20 +122,18 @@ async def detect_image_nsfw(
         label=result.label,
         score=result.score,
         all_predictions=result.all_predictions,
-    )
+    ))
     return result
 
 
 @app.post("/detect/image/flux", response_model=DetectionResult)
 async def detect_image_flux(
     file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Analyze an image for Flux.1-generated content."""
     contents, image_hash = await _read_and_hash(file)
     result = await _process_image_from_bytes(Image.open(io.BytesIO(contents)).convert("RGB"), models['flux'])
-    background_tasks.add_task(
-        stats_service.log_detection_event,
+    event_batcher.enqueue(dict(
         recognizer="flux",
         endpoint="/detect/image/flux",
         image_hash=image_hash,
@@ -144,14 +141,13 @@ async def detect_image_flux(
         label=result.label,
         score=result.score,
         all_predictions=result.all_predictions,
-    )
+    ))
     return result
 
 @app.post("/detect/image", response_model=MultiDetectionResult)
 async def detect_image_multi(
     file: Annotated[UploadFile, File(...)],
     recognizers: Annotated[str, Form(..., description="Comma-separated list of recognizers to run: deepfake, nsfw, flux")],
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """Run one or more recognizers on an image in parallel and return combined results."""
     requested = {name.strip().lower() for name in recognizers.split(",") if name.strip()}
@@ -173,12 +169,16 @@ async def detect_image_multi(
 
     pairs = await asyncio.gather(*[_run_one(name) for name in requested])
     results = dict(pairs)
-    background_tasks.add_task(
-        stats_service.log_multi_detection_events,
-        endpoint="/detect/image",
-        image_hash=image_hash,
-        results=results,
-    )
+    for recognizer_name, result in results.items():
+        event_batcher.enqueue(dict(
+            recognizer=recognizer_name,
+            endpoint="/detect/image",
+            image_hash=image_hash,
+            is_flagged=result.is_target,
+            label=result.label,
+            score=result.score,
+            all_predictions=result.all_predictions,
+        ))
     return MultiDetectionResult(results=results)
 
 

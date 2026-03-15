@@ -39,7 +39,7 @@ def _get_pool():
 
         try:
             import psycopg2.pool
-            _pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=5, dsn=url)
+            _pool = psycopg2.pool.ThreadedConnectionPool(minconn=2, maxconn=20, dsn=url)
             logger.info("PostgreSQL connection pool ready.")
             return _pool
         except Exception:
