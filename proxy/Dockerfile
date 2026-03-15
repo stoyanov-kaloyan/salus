@@ -1,11 +1,7 @@
-FROM golang:1.24-alpine AS builder
+FROM python:3.12-slim
 WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o proxy .
-
-FROM gcr.io/distroless/static
-COPY --from=builder /app/proxy /proxy
 EXPOSE 8080
-ENTRYPOINT ["/proxy"]
+CMD ["mitmdump", "-s", "proxy.py", "--listen-host", "0.0.0.0", "--listen-port", "8080", "--set", "confdir=/certs", "--set", "block_global=false", "--ignore-hosts", "(^|\\.)apple\\.com$|(^|\\.)icloud\\.com$|(^|\\.)mzstatic\\.com$|(^|\\.)google\\.com$|(^|\\.)googleapis\\.com$|(^|\\.)gstatic\\.com$|(^|\\.)googlevideo\\.com$"]

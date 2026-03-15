@@ -1,2 +1,8 @@
 .idea
 .vim
+.venv/
+__pycache__/
+*.pyc
+proxy/certs/mitmproxy*
+proxy/clients.json
+.env*

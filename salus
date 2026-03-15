@@ -2,234 +2,47 @@
 set -euo pipefail
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Salus — environment management
+# Salus — full stack management via docker compose
 #
-# Dev  (docker-compose):
-#   ./salus dev [up|down]   start / stop local dev environment
-#
-# Deploy (kind + k8s):
-#   ./salus up              create kind cluster + apply all manifests
-#   ./salus down            delete k8s resources (PVCs are kept)
-#   ./salus destroy         tear down the entire kind cluster
+#   ./salus up      build images + start all services
+#   ./salus down    stop + remove all containers
+#   ./salus logs    follow logs for all services
+#   ./salus build   rebuild images without restarting
 # ──────────────────────────────────────────────────────────────────────────────
 
-CLUSTER_NAME="salus"
-KIND_CONFIG="kind-config.yaml"
 CMD="${1:-}"
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-log()  { echo "[salus] $*"; }
-err()  { echo "[salus] ERROR: $*" >&2; }
-dots() { printf "."; }
-
-wait_for() {
-  local label="$1" timeout="$2"
-  shift 2
-  local cmd=("$@") elapsed=0
-
-  log "Waiting for: $label"
-  while ! "${cmd[@]}" &>/dev/null; do
-    if (( elapsed >= timeout )); then
-      echo ""
-      err "Timed out after ${timeout}s waiting for: $label"
-      exit 1
-    fi
-    dots; sleep 3; (( elapsed += 3 ))
-  done
-  echo ""
-  log "Ready: $label"
-}
-
-# ── prerequisites ─────────────────────────────────────────────────────────────
-
-check_docker() {
-  command -v docker &>/dev/null || { err "Missing: docker"; exit 1; }
-}
-
-check_k8s_prereqs() {
-  local missing=()
-  command -v kind    &>/dev/null || missing+=("kind")
-  command -v kubectl &>/dev/null || missing+=("kubectl")
-  if (( ${#missing[@]} > 0 )); then
-    err "Missing required tools: ${missing[*]}"
-    err "Install via: brew install kind kubectl"
-    exit 1
-  fi
-}
-
-# ── dev (docker-compose) ──────────────────────────────────────────────────────
-
-dev() {
-  check_docker
-  local sub="${1:-up}"
-  case "$sub" in
-    up)
-      log "Starting dev environment..."
-      docker compose up -d
-      log ""
-      log "Dev environment running."
-      log ""
-      log "  ┌──────────────────────────────────────────────┐"
-      log "  │  Service     Host           Port             │"
-      log "  │  ─────────   ─────────────  ──────────────── │"
-      log "  │  Kafka       kafka-1        9092             │"
-      log "  │  TimescaleDB timescaledb    5432             │"
-      log "  │  Redis       redis          6379             │"
-      log "  │  Proxy       localhost      8080             │"
-      log "  │                                              │"
-      log "  │  CA cert:  curl http://localhost:8080/ca.crt │"
-      log "  └──────────────────────────────────────────────┘"
-      ;;
-    down)
-      log "Stopping dev environment..."
-      docker compose down
-      log "Dev environment stopped."
-      ;;
-    *)
-      err "Unknown dev subcommand: $sub  (use: up | down)"
-      exit 1
-      ;;
-  esac
-}
-
-# ── build ─────────────────────────────────────────────────────────────────────
-
-build() {
-  check_docker
-  check_k8s_prereqs
-
-  log "Building salus/proxy:latest..."
-  docker build -t salus/proxy:latest proxy/
-
-  if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
-    log "kind cluster '$CLUSTER_NAME' not found — skipping image load"
-    log "Run './salus up' to create the cluster, then './salus build' again."
-    return
-  fi
-
-  log "Loading image into kind cluster '$CLUSTER_NAME'..."
-  kind load docker-image salus/proxy:latest --name "$CLUSTER_NAME"
-  log "Done. Restart the deployment with: kubectl rollout restart deployment/proxy"
-}
-
-# ── k8s cluster lifecycle ─────────────────────────────────────────────────────
-
-ensure_cluster() {
-  if kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
-    log "kind cluster '$CLUSTER_NAME' already exists — skipping create"
-  else
-    log "Creating kind cluster '$CLUSTER_NAME'..."
-    kind create cluster --name "$CLUSTER_NAME" --config "$KIND_CONFIG"
-  fi
-  kubectl config use-context "kind-${CLUSTER_NAME}"
-}
-
-# ── up (k8s) ──────────────────────────────────────────────────────────────────
-
-up() {
-  check_k8s_prereqs
-  ensure_cluster
-
-  # Load proxy image into kind if built locally.
-  if docker image inspect salus/proxy:latest &>/dev/null; then
-    log "Loading proxy image into kind cluster..."
-    kind load docker-image salus/proxy:latest --name "$CLUSTER_NAME"
-  else
-    log "WARNING: salus/proxy:latest not found locally — build it first:"
-    log "  docker build -t salus/proxy:latest proxy/"
-  fi
-
-  log "Applying manifests..."
-  kubectl apply -f k8s/kafka.yaml
-  kubectl apply -f k8s/timescaledb.yaml
-  kubectl apply -f k8s/redis.yaml
-  kubectl apply -f k8s/proxy.yaml
-
-  log "Waiting for rollouts..."
-  kubectl rollout status statefulset/kafka       --timeout=180s
-  kubectl rollout status statefulset/timescaledb --timeout=90s
-  kubectl rollout status statefulset/redis       --timeout=60s
-  kubectl rollout status deployment/proxy        --timeout=60s
-
-  log "Probing Kafka broker (kafka-0)..."
-  wait_for "kafka broker on kafka-0" 120 \
-    kubectl exec kafka-0 -- \
-      kafka-topics.sh --bootstrap-server localhost:9092 --list
-
-  log ""
-  log "All services are ready."
-  log ""
-  log "  ┌──────────────────────────────────────────────────────────────┐"
-  log "  │  Service        Host                          Port           │"
-  log "  │  ──────────     ─────────────────────────     ────────────── │"
-  log "  │  Kafka          kafka.default.svc             9092           │"
-  log "  │  TimescaleDB    timescaledb.default.svc       5432           │"
-  log "  │  Redis          redis.default.svc             6379           │"
-  log "  │  Proxy          localhost                     8080           │"
-  log "  └──────────────────────────────────────────────────────────────┘"
-  log ""
-  log "Forwarding proxy to localhost:8080 (Ctrl-C to stop)..."
-  kubectl port-forward service/proxy 8080:8080
-}
-
-# ── down (k8s) ────────────────────────────────────────────────────────────────
-
-down() {
-  check_k8s_prereqs
-
-  if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
-    log "kind cluster '$CLUSTER_NAME' does not exist — nothing to do"
-    return
-  fi
-
-  kubectl config use-context "kind-${CLUSTER_NAME}"
-
-  log "Deleting resources..."
-  kubectl delete -f k8s/proxy.yaml       --ignore-not-found
-  kubectl delete -f k8s/kafka.yaml       --ignore-not-found
-  kubectl delete -f k8s/timescaledb.yaml --ignore-not-found
-  kubectl delete -f k8s/redis.yaml       --ignore-not-found
-
-  log ""
-  log "Resources deleted."
-  log "PersistentVolumeClaims are intentionally kept."
-  log "To remove them:  kubectl delete pvc --all"
-  log "To destroy the cluster: ./salus destroy"
-}
-
-# ── destroy ───────────────────────────────────────────────────────────────────
-
-destroy() {
-  check_k8s_prereqs
-
-  if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
-    log "kind cluster '$CLUSTER_NAME' does not exist — nothing to do"
-    return
-  fi
-
-  log "Destroying kind cluster '$CLUSTER_NAME'..."
-  kind delete cluster --name "$CLUSTER_NAME"
-  log "Cluster deleted. (Docker volumes were removed with it.)"
-}
-
-# ── dispatch ──────────────────────────────────────────────────────────────────
+log() { echo "[salus] $*"; }
+err() { echo "[salus] ERROR: $*" >&2; }
 
 case "$CMD" in
-  dev)     shift; dev "$@"  ;;
-  build)   build            ;;
-  up)      up               ;;
-  down)    down             ;;
-  destroy) destroy          ;;
+  build)
+    log "Building images..."
+    docker compose build
+    ;;
+
+  up)
+    log "Starting all services..."
+    docker compose up -d --build
+    ;;
+
+  down)
+    log "Stopping all services..."
+    docker compose down
+    ;;
+
+  logs)
+    docker compose logs -f
+    ;;
+
   *)
     err "Unknown command: ${CMD:-<none>}"
     echo ""
     echo "Usage:"
-    echo "  ./salus dev [up|down]   — docker-compose dev environment"
-    echo "  ./salus build           — build proxy image + load into kind"
-    echo "  ./salus up              — create kind cluster + apply k8s manifests"
-    echo "  ./salus down            — delete k8s resources (keep PVCs)"
-    echo "  ./salus destroy         — tear down kind cluster"
+    echo "  ./salus up      build + start all services"
+    echo "  ./salus down    stop all services"
+    echo "  ./salus logs    follow logs"
+    echo "  ./salus build   rebuild images"
     exit 1
     ;;
 esac

@@ -142,6 +142,20 @@ def log_multi_detection_events(
         logger.exception("Failed to batch-log %d detection events.", len(results))
 
 
+def flush_batch(items: list[dict]) -> None:
+    """Write a list of queued detection events in a single transaction."""
+    if not items:
+        return
+    try:
+        with db_client.cursor() as cur:
+            if cur is None:
+                return
+            for item in items:
+                _upsert_row(cur, **item)
+    except Exception:
+        logger.exception("Failed to flush batch of %d detection events", len(items))
+
+
 # ---------------------------------------------------------------------------
 # Read helpers
 # ---------------------------------------------------------------------------
