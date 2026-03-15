@@ -151,7 +151,7 @@
 }
 
 .two-column-note {
-    font-size: 0.8em;
+    font-size: 0.6em;
     color: var(--salus-muted-foreground);
     margin-top: 6px;
     border-left: 3px solid hsl(205 86% 76%);

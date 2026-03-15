@@ -153,6 +153,90 @@ def plot_confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray, out_path: Path
     plt.close(fig)
 
 
+def plot_deepstrike_risk_snapshot(out_path: Path) -> None:
+    growth_labels = [
+        "Fraud attempts",
+        "North America fraud growth",
+        "APAC fraud growth",
+        "IDV bypass attacks",
+    ]
+    growth_values = np.array([3000.0, 1740.0, 1530.0, 704.0], dtype=np.float32)
+
+    context_labels = [
+        "NCII share of deepfakes",
+        "Crypto share of detected fraud",
+        "Human detection (video)",
+    ]
+    context_values = np.array([97.0, 88.0, 24.5], dtype=np.float32)
+
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.1), gridspec_kw={"width_ratios": [1.25, 1.0]})
+    ax_growth, ax_context = axes
+
+    y_growth = np.arange(len(growth_labels))
+    growth_bars = ax_growth.barh(
+        y_growth,
+        growth_values,
+        color=["#B22222", "#D54A3A", "#E07A5F", "#F2A65A"],
+        edgecolor="#1B1B1B",
+        linewidth=0.8,
+    )
+    ax_growth.set_yticks(y_growth, labels=growth_labels)
+    ax_growth.invert_yaxis()
+    ax_growth.set_xlim(0, float(np.max(growth_values) * 1.27))
+    ax_growth.set_xlabel("Growth (%)")
+    ax_growth.set_title("Attack growth indicators")
+    ax_growth.grid(axis="x", alpha=0.22)
+
+    growth_max = float(np.max(growth_values))
+    for bar, value in zip(growth_bars, growth_values):
+        ax_growth.text(
+            bar.get_width() + growth_max * 0.02,
+            bar.get_y() + bar.get_height() / 2,
+            f"+{value:,.0f}%",
+            va="center",
+            fontsize=9,
+            weight="bold",
+        )
+
+    y_context = np.arange(len(context_labels))
+    context_bars = ax_context.barh(
+        y_context,
+        context_values,
+        color=["#C1121F", "#D97706", "#3B6EA5"],
+        edgecolor="#1B1B1B",
+        linewidth=0.8,
+    )
+    ax_context.set_yticks(y_context, labels=context_labels)
+    ax_context.invert_yaxis()
+    ax_context.set_xlim(0, 100)
+    ax_context.set_xlabel("Share / accuracy (%)")
+    ax_context.set_title("Exposure and detection limits")
+    ax_context.grid(axis="x", alpha=0.22)
+
+    for bar, value in zip(context_bars, context_values):
+        ax_context.text(
+            bar.get_width() + 1.5,
+            bar.get_y() + bar.get_height() / 2,
+            f"{value:.1f}%",
+            va="center",
+            fontsize=9,
+            weight="bold",
+        )
+
+    fig.suptitle("Deepfake Risk Snapshot (2025)", fontsize=14, weight="bold")
+    fig.text(
+        0.01,
+        0.005,
+        "Source: DeepStrike - Deepfake Statistics 2025 (deepstrike.io/blog/deepfake-statistics-2025)",
+        fontsize=8,
+        color="#4A4A4A",
+    )
+
+    fig.tight_layout(rect=(0, 0.05, 1, 0.95))
+    fig.savefig(out_path, dpi=190)
+    plt.close(fig)
+
+
 def plot_threshold_curves(y_true: np.ndarray, scores: np.ndarray, out_path: Path) -> dict[str, float]:
     thresholds = np.linspace(0.05, 0.95, 91)
     precision_vals: list[float] = []
@@ -219,6 +303,7 @@ def main() -> None:
     plot_score_distribution(y_true, scores, out_dir / "score_distribution.png")
     plot_confusion_matrix(y_true, y_pred, out_dir / "confusion_matrix.png")
     plot_confusion_matrix(y_true, y_pred_best, out_dir / "confusion_matrix_best_threshold.png")
+    plot_deepstrike_risk_snapshot(out_dir / "deepfake_risk_snapshot_2025.png")
 
     summary = {
         "sample_count": int(y_true.size),

@@ -7,6 +7,7 @@ opencv-python-headless
 torch
 scikit-learn
 matplotlib
+tqdm
 python-multipart
 torchvision
 supabase
