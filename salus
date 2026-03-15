@@ -2,62 +2,47 @@
 set -euo pipefail
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Salus — proxy management
+# Salus — full stack management via docker compose
 #
-#   ./salus up      build image + start proxy on :8080
-#   ./salus down    stop + remove the proxy container
-#   ./salus logs    follow proxy logs
-#   ./salus build   rebuild image without restarting
+#   ./salus up      build images + start all services
+#   ./salus down    stop + remove all containers
+#   ./salus logs    follow logs for all services
+#   ./salus build   rebuild images without restarting
 # ──────────────────────────────────────────────────────────────────────────────
 
-IMAGE="salus/proxy:latest"
-CONTAINER="salus-proxy"
-CERTS_VOL="salus-proxy-certs"
 CMD="${1:-}"
 
 log() { echo "[salus] $*"; }
 err() { echo "[salus] ERROR: $*" >&2; }
 
-build() {
-  log "Building $IMAGE..."
-  docker build -t "$IMAGE" proxy/
-}
-
 case "$CMD" in
   build)
-    build
+    log "Building images..."
+    docker compose build
     ;;
 
   up)
-    build
-    docker rm -f "$CONTAINER" 2>/dev/null || true
-    log "Starting proxy on :8080..."
-    docker run -d \
-      --name "$CONTAINER" \
-      -p 8080:8080 \
-      -v "${CERTS_VOL}:/certs" \
-      -e PROXY_SETUP_HOST="salus.proxy" \
-      -e DETERMINISTIC_CALIBRATION_PATH="/app/deterministic_calibration.json" \
-      "$IMAGE"
-    log "Proxy running. Setup page: http://salus.proxy (via proxy) or http://localhost:8080"
+    log "Starting all services..."
+    docker compose up -d --build
     ;;
 
   down)
-    docker rm -f "$CONTAINER" 2>/dev/null && log "Proxy stopped." || log "Nothing to stop."
+    log "Stopping all services..."
+    docker compose down
     ;;
 
   logs)
-    docker logs -f "$CONTAINER"
+    docker compose logs -f
     ;;
 
   *)
     err "Unknown command: ${CMD:-<none>}"
     echo ""
     echo "Usage:"
-    echo "  ./salus up      build + start proxy on :8080"
-    echo "  ./salus down    stop proxy"
-    echo "  ./salus logs    follow proxy logs"
-    echo "  ./salus build   rebuild image"
+    echo "  ./salus up      build + start all services"
+    echo "  ./salus down    stop all services"
+    echo "  ./salus logs    follow logs"
+    echo "  ./salus build   rebuild images"
     exit 1
     ;;
 esac

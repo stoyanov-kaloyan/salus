@@ -17,8 +17,8 @@ services:
       - salus-net
     volumes:
       - salus-postgres-data:/var/lib/postgresql/data
-      - ./proxy-poc/db/init/01-roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
-      - ./proxy-poc/db/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
+      - ./api/db/init/01-roles.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+      - ./api/db/schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-salus}
       POSTGRES_USER: ${POSTGRES_USER:-salus}
@@ -37,7 +37,7 @@ services:
   api:
     platform: linux/arm64
     build:
-      context: ./proxy-poc
+      context: ./api
       dockerfile: Dockerfile
     restart: unless-stopped
     networks:
@@ -76,7 +76,7 @@ services:
 
   web:
     build:
-      context: ./salus-web-app
+      context: ./web
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
