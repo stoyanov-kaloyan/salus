@@ -5,12 +5,12 @@ author: "FMI{CODES}"
 lang: bg
 format:
   revealjs:
+    theme: simple
     css: salus-theme.css
+    scrollable: true
     slide-number: true
     transition: fade
     center: false
-    width: 1366
-    height: 768
     footer: "SALUS · FMI{CODES}"
     logo: "../salus-web-app/public/logo.png"
 execute:
