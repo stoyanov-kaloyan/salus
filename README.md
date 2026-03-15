@@ -50,7 +50,7 @@ requires `quarto` CLI installed
 
 Presentation source files are in `presentation/`:
 
-- `presentation/salus_hackathon_bg.qmd`
+- `presentation/salus_presentation.qmd`
 - `presentation/generate_charts.py`
 
 ### 1) Generate chart assets (matplotlib)
@@ -73,19 +73,19 @@ From repo root:
 
 ```powershell
 # RevealJS HTML slides
-quarto render presentation/salus_hackathon_bg.qmd --to revealjs
+quarto render presentation/salus_presentation.qmd --to revealjs
 
 # PowerPoint export
-quarto render presentation/salus_hackathon_bg.qmd --to pptx
+quarto render presentation/salus_presentation.qmd --to pptx
 ```
 
 Generated files:
 
-- `presentation/salus_hackathon_bg.html`
-- `presentation/salus_hackathon_bg.pptx`
+- `presentation/salus_presentation.html`
+- `presentation/salus_presentation.pptx`
 
 ### 3) Optional: render both in one command
 
 ```powershell
-quarto render presentation/salus_hackathon_bg.qmd --to revealjs; quarto render presentation/salus_hackathon_bg.qmd --to pptx
+quarto render presentation/salus_presentation.qmd --to revealjs; quarto render presentation/salus_presentation.qmd --to pptx
 ```
