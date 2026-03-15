@@ -1,5 +1,7 @@
 # Salus
 
+Deepfake image protection.
+
 ## How to set up Iphone proxy.
 
 ### Run this and go to http://mitm.it

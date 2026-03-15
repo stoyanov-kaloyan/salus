@@ -12,7 +12,7 @@ format:
     transition: fade
     center: false
     footer: "Crustacean Republic · FMI{CODES} 2026"
-    logo: "../salus-web-app/public/logo2.png"
+    logo: "../assets/logo2.png"
 execute:
   enabled: false
 ---
@@ -26,7 +26,7 @@ execute:
 :::
 :::
 
-## Рискове и вреди
+## Значимост
 ::: {.columns}
 ::: {.column width="100%"}
 ![](assets/deepfake_risk_snapshot_2025.png){fig-alt="Графика за риска от deepfake" width="100%"}
@@ -40,10 +40,10 @@ execute:
 ## Решение
 ::: {.columns}
 ::: {.column width="30%"}
-![](assets/before.webp){fig-alt="Преди SALUS" width="100%"}
+![](assets/before.png){fig-alt="Преди SALUS" width="100%"}
 :::
 ::: {.column width="30%"}
-![](assets/after.webp){fig-alt="След SALUS" width="100%"}
+![](assets/after.png){fig-alt="След SALUS" width="100%"}
 :::
 ::: {.column width="40%"}
 - Засича вредни изображения
@@ -81,7 +81,7 @@ Deepfake моделът е обучен от нас върху над 200,000 и
 
 Постигаме 92% точност с модел от само 12M параметри.
 
-## Резултати
+## Нашият модел
 
 ::: {.columns}
 ::: {.column width="100%"}
@@ -90,20 +90,32 @@ Deepfake моделът е обучен от нас върху над 200,000 и
 :::
 
 
+## Предимства 
 
-## Roadmap след хакатона
+- Лесен локален setup посредством docker compose
+- Работи навсякъде
+- Леки AI модели
+- Защитава личните данни
+- Широк обхват на защита
 
-::: {.kicker}
-Какво следва
+## Демо
+
+::: {.columns}
+::: {.column width="34%"} 
+:::
+::: {.column width="26%"} 
+{{< video assets/demo.MP4  >}}
+:::
 :::
 
-- Два режима на праг: `strict` и `balanced`
-- По-голям validation benchmark + калибрация по домейн
-- Drift и latency мониторинг в production
-- Policy слой за автоматични действия при висок риск
+## Какво следва
 
-## Благодарим
 
-### Въпроси?
+- Публична услуга
+- Разширение на защитния домейн
+- Самообучаване в реално време
+- Допълнително оптимизиране на моделите
 
-Контакт: екип SALUS, FMI{CODES}
+## Благодарим - Въпроси?
+
+Crustacean Republic
