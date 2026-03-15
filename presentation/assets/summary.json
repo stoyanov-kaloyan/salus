@@ -1,0 +1,29 @@
+{
+  "sample_count": 40,
+  "real_count": 20,
+  "ai_count": 20,
+  "metrics_current_threshold": {
+    "tp": 10.0,
+    "tn": 10.0,
+    "fp": 10.0,
+    "fn": 10.0,
+    "precision": 0.5,
+    "recall": 0.5,
+    "f1": 0.5,
+    "accuracy": 0.5
+  },
+  "metrics_best_threshold": {
+    "tp": 20.0,
+    "tn": 4.0,
+    "fp": 16.0,
+    "fn": 0.0,
+    "precision": 0.5555555555555556,
+    "recall": 1.0,
+    "f1": 0.7142857142857143,
+    "accuracy": 0.6
+  },
+  "threshold_sweep": {
+    "best_threshold": 0.13,
+    "best_f1": 0.7142857142857143
+  }
+}
