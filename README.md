@@ -44,58 +44,48 @@ python -m unittest tests/test_hybrid_risk_pipeline.py
 python -m unittest tests/test_deepfake_recognizer_gpu_integration.py
 ```
 
-### Manual CLI usage
+## Compile Presentation (Quarto)
 
-```
-# Analyze a specific image
-python .\deterministic_analysis.py .\test_images\real1.jpg
-python .\deterministic_analysis.py .\test_images\deepfake1.png
+requires `quarto` CLI installed
 
-# Runtime profile controls (default profile is now "fast")
-$env:DETERMINISTIC_PROFILE = "fast"      # fast | balanced | full
-$env:DETERMINISTIC_MAX_SIDE = "512"      # resize cap before deterministic analysis
+Presentation source files are in `presentation/`:
 
-# Use a trained calibration file
-$env:DETERMINISTIC_CALIBRATION_PATH = ".\deterministic_calibration.json"
-python .\deterministic_analysis.py .\test_images\real1.jpg
-```
+- `presentation/salus_hackathon_bg.qmd`
+- `presentation/generate_charts.py`
 
-### Deterministic calibration training
+### 1) Generate chart assets (matplotlib)
 
-```
-# manifest.csv columns: path,label  (0=real, 1=deepfake)
-python .\deterministic_training.py `
-  --manifest .\manifest.csv `
-  --output .\deterministic_calibration.json `
-  --profile fast `
-  --executor process `
-  --epochs 1200 `
-  --validation-fraction 0.20 `
-  --max-workers 4
+From repo root:
+
+```powershell
+# optional: activate local venv
+& .\.venv\Scripts\Activate.ps1
+
+# build charts used in slides
+python .\presentation\generate_charts.py
 ```
 
-The deterministic runtime uses the `fast` profile by default to keep request latency down. If you train a calibration file, use the same profile and image-size cap in both training and serving so the learned weights match the live feature vectors.
+This writes image assets and summary metrics to `presentation/assets/`.
 
-Feature extraction in `deterministic_training.py` supports `--executor process` (default) for CPU-bound OpenCV workloads, with `--executor thread` available as a fallback.
+### 2) Render slides with Quarto
 
-## Using the Calibration File
+From repo root:
 
-Copy `deterministic_calibration.json` to your server and set the environment variables before starting the API:
+```powershell
+# RevealJS HTML slides
+quarto render presentation/salus_hackathon_bg.qmd --to revealjs
 
-```bash
-export DETERMINISTIC_CALIBRATION_PATH=/path/to/deterministic_calibration.json
-export DETERMINISTIC_PROFILE=fast
-export DETERMINISTIC_MAX_SIDE=512
-export DEEPFAKE_USE_DETERMINISTIC=true
-export DEEPFAKE_DETERMINISTIC_WEIGHT=0.20
-export DEEPFAKE_NEURAL_PRIORITY_WEIGHT=0.90
-export DEEPFAKE_NEURAL_CONFLICT_THRESHOLD=0.25
-export DEEPFAKE_NEURAL_OVERRIDE_THRESHOLD=0.85
-export DEEPFAKE_NEURAL_OVERRIDE_WEIGHT=0.95
-
-uvicorn api:app --host 0.0.0.0 --port 8000
+# PowerPoint export
+quarto render presentation/salus_hackathon_bg.qmd --to pptx
 ```
 
-This notebook now trains the `fast` profile, so the serving path should use the same profile and resize cap when you deploy the resulting calibration file.
+Generated files:
 
-The deepfake fusion now gives explicit priority to the neural detector when signals conflict or the neural branch is highly confident. Deterministic risk still contributes as a secondary signal.
+- `presentation/salus_hackathon_bg.html`
+- `presentation/salus_hackathon_bg.pptx`
+
+### 3) Optional: render both in one command
+
+```powershell
+quarto render presentation/salus_hackathon_bg.qmd --to revealjs; quarto render presentation/salus_hackathon_bg.qmd --to pptx
+```

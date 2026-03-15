@@ -1,0 +1,254 @@
+\documentclass[12pt,a4paper]{article}
+% kompilirarai s - xelatex -interaction=nonstopmode modelling.tex
+
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+\setsansfont{Arial}
+\setmonofont{Consolas}
+
+\usepackage{amsmath,amssymb,bm}
+
+\usepackage[margin=2.5cm]{geometry}
+\setlength{\parskip}{6pt}
+\setlength{\parindent}{0pt}
+\usepackage{booktabs}
+
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue]{hyperref}
+
+\title{\textbf{SALUS -- Математически модел (само deep learning детектори)}}
+\author{FMI\{CODES\} Demo}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Въведение}
+
+Системата за оценяване на изображения използва 3 модела:
+\begin{itemize}
+  \item Deepfake детектор (ResNet-18, бинарна класификация);
+  \item NSFW детектор (Hugging Face image-classification pipeline);
+  \item Flux детектор (SigLIP image classifier).
+\end{itemize}
+
+\section{Нотация}
+
+Нека входното изображение е $I \in \mathbb{R}^{H \times W \times 3}$,
+а множеството достъпни разпознаватели е
+\begin{equation}
+\mathcal{R} = \{\text{deepfake},\; \text{nsfw},\; \text{flux}\}.
+\end{equation}
+
+За всеки разпознавател $r \in \mathcal{R}$ дефинираме:
+\begin{equation}
+\text{result}_r = (y_r,\; \ell_r,\; s_r,\; \mathbf{p}_r),
+\end{equation}
+където:
+\begin{itemize}
+  \item $y_r \in \{0,1\}$ е бинарното решение \emph{is\_target};
+  \item $\ell_r$ е текстов етикет (label);
+  \item $s_r \in [0,1]$ е основният score;
+  \item $\mathbf{p}_r$ е списък от всички предсказания (label, score).
+\end{itemize}
+
+\section{Deepfake модел (ResNet-18)}
+
+\subsection{Лицево изрязване (face crop)}
+
+Нека детектираният bbox на най-голямото лице е $(x,y,w,h)$ и padding $\alpha=0.15$.
+Крайният crop е:
+\begin{align}
+x_1 &= \max(0,\; x-\alpha w), & x_2 &= \min(W,\; x+w+\alpha w), \\
+y_1 &= \max(0,\; y-\alpha h), & y_2 &= \min(H,\; y+h+\alpha h).
+\end{align}
+
+\subsection{Мрежа и решение}
+
+Остатъчен блок в ResNet има вида:
+\begin{equation}
+\mathbf{z}_{k+1} = \mathcal{F}(\mathbf{z}_k;\theta_k) + \mathbf{z}_k.
+\end{equation}
+
+След resize и normalize към $224\times224$, мрежата връща логит $u_{df}$,
+а вероятността за deepfake е:
+\begin{equation}
+p_{df} = \sigma(u_{df}) = \frac{1}{1+e^{-u_{df}}}.
+\end{equation}
+
+С праг $\tau_{df}$:
+\begin{equation}
+y_{df} = \mathbf{1}[p_{df} \ge \tau_{df}], \qquad
+\ell_{df} =
+\begin{cases}
+\text{Deepfake}, & y_{df}=1,\\
+\text{Real}, & y_{df}=0,
+\end{cases}
+\qquad s_{df}=p_{df}.
+\end{equation}
+
+\section{Как обучихме нашия Deepfake модел}
+
+\subsection{Данни и етикети}
+
+Моделът е трениран върху датасета
+\texttt{muhammadbilal6305/200k-real-vs-ai-visuals-by-mbilal},
+като задачата е бинарна класификация:
+\begin{equation}
+\mathcal{D} = \{(x_i, y_i)\}_{i=1}^{N}, \qquad y_i \in \{0,1\},
+\end{equation}
+където $y_i=0$ означава \textit{real}, а $y_i=1$ означава \textit{fake}.
+
+\subsection{Разделяне train/validation}
+
+Използваме стратифицирано разделяне (20\% validation):
+\begin{equation}
+|\mathcal{D}_{train}| \approx 0.8N, \qquad |\mathcal{D}_{val}| \approx 0.2N,
+\end{equation}
+като относителният дял на класовете се запазва във всеки split.
+
+\subsection{Предобработка и аугментации}
+
+За train използваме resize, random resized crop, horizontal flip,
+color jitter и нормализация по канали; за validation -- детерминистичен
+resize и същата нормализация.
+
+Нормализацията на пикселите е:
+\begin{equation}
+\tilde{x}_{c,h,w} = \frac{x_{c,h,w} - \mu_c}{\sigma_c},
+\end{equation}
+с
+\begin{equation}
+\bm{\mu}=(0.485,\,0.456,\,0.406),
+\qquad
+\bm{\sigma}=(0.229,\,0.224,\,0.225).
+\end{equation}
+
+\subsection{Балансиране на класовете}
+
+Използваме два механизма за баланс:
+\begin{enumerate}
+  \item \textbf{WeightedRandomSampler} с тегло на проба
+  \begin{equation}
+  w_i = \frac{1}{n_{y_i}},
+  \end{equation}
+  където $n_{y_i}$ е броят примери от класа на $x_i$;
+  \item \textbf{BCEWithLogitsLoss} с
+  \begin{equation}
+  \text{pos\_weight} = \frac{n_{real}}{n_{fake}}.
+  \end{equation}
+\end{enumerate}
+
+\subsection{Функция на загуба и оптимизация}
+
+Нека $z_i$ е логитът за проба $i$, $p_i=\sigma(z_i)$.
+Тренираме с претеглена бинарна крос-ентропия:
+\begin{equation}
+\mathcal{L}_{BCE} = -\frac{1}{M}\sum_{i=1}^{M}
+\left[\alpha y_i \log p_i + (1-y_i)\log(1-p_i)\right],
+\end{equation}
+където $\alpha=\text{pos\_weight}$ и $M$ е размерът на batch-а.
+
+Оптимизацията е с AdamW:
+\begin{equation}
+\theta \leftarrow \theta - \eta\,\nabla_{\theta}\mathcal{L}_{BCE},
+\end{equation}
+с learning rate $\eta=3\times10^{-4}$ и weight decay $10^{-4}$.
+
+\subsection{Оценка и избор на checkpoint}
+
+На validation сета използваме праг $0.5$:
+\begin{equation}
+\hat{y}_i = \mathbf{1}[p_i \ge 0.5].
+\end{equation}
+
+След всяка епоха смятаме Accuracy, Precision, Recall, $F_1$ и ROC-AUC,
+като запазваме \textit{best checkpoint} по максимална стойност на
+$F_1$ върху validation.
+
+\section{NSFW модел}
+
+NSFW разпознавателят връща вероятности за класове
+$\mathcal{C}_{nsfw}=\{\text{normal},\text{nsfw}\}$.
+
+Нека $p_{nsfw}=P(c=\text{nsfw}\mid I)$. Тогава:
+\begin{equation}
+y_{nsfw}=\mathbf{1}[p_{nsfw}\ge\tau_{nsfw}], \qquad s_{nsfw}=p_{nsfw}.
+\end{equation}
+
+Етикетът е дефиниран така, че при нисък NSFW score да връща normal:
+\begin{equation}
+\ell_{nsfw}=
+\begin{cases}
+\text{nsfw}, & y_{nsfw}=1,\\
+\arg\max\limits_{c\in\mathcal{C}_{nsfw}} P(c\mid I), & y_{nsfw}=0.
+\end{cases}
+\end{equation}
+
+\section{Flux модел (SigLIP)}
+
+Моделът връща logits $\mathbf{z}\in\mathbb{R}^{K}$ и Softmax вероятности:
+\begin{equation}
+\mathbf{p}_{flux} = \text{softmax}(\mathbf{z}),
+\qquad
+p_{flux} = P(c=\text{Flux.1\_Generated}\mid I).
+\end{equation}
+
+С праг $\tau_{flux}$:
+\begin{equation}
+y_{flux}=\mathbf{1}[p_{flux}\ge\tau_{flux}],\qquad s_{flux}=p_{flux},
+\end{equation}
+\begin{equation}
+\ell_{flux}=
+\begin{cases}
+\text{Flux.1\_Generated}, & y_{flux}=1,\\
+\arg\max\limits_{c} P(c\mid I), & y_{flux}=0.
+\end{cases}
+\end{equation}
+
+\section{Multi-endpoint формулировка}
+
+За подмножество заявени разпознаватели $\mathcal{R}_{req}\subseteq\mathcal{R}$,
+endpoint-ът изпълнява всеки модел паралелно и връща:
+\begin{equation}
+\text{results} = \{r \mapsto \text{result}_r \mid r\in\mathcal{R}_{req}\}.
+\end{equation}
+
+Изображението се идентифицира с SHA-256 хеш:
+\begin{equation}
+h = \text{SHA256}(\text{bytes}(I)).
+\end{equation}
+
+Практическо агрегирано правило за флагване (ако е нужно на продуктово ниво):
+\begin{equation}
+y_{global} = \max_{r\in\mathcal{R}_{req}} y_r,
+\end{equation}
+т.е. изображението се счита за рисково, ако поне един разпознавател го маркира.
+
+\section{Метрики за оценка}
+
+За всеки модел поотделно се използват:
+\begin{align}
+\text{Precision} &= \frac{TP}{TP+FP+\varepsilon}, \\
+\text{Recall}    &= \frac{TP}{TP+FN+\varepsilon}, \\
+F_1              &= \frac{2\,\text{Precision}\cdot\text{Recall}}
+                         {\text{Precision}+\text{Recall}+\varepsilon}, \\
+\text{Accuracy}  &= \frac{TP+TN}{TP+TN+FP+FN+\varepsilon}.
+\end{align}
+
+\section{Кратко обобщение}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Модел} & \textbf{Основен score} & \textbf{Праг / решение} \\
+\midrule
+Deepfake (ResNet-18) & $s_{df}=p_{df}$ & $y_{df}=\mathbf{1}[p_{df}\ge\tau_{df}]$ \\
+NSFW pipeline & $s_{nsfw}=p_{nsfw}$ & $y_{nsfw}=\mathbf{1}[p_{nsfw}\ge\tau_{nsfw}]$ \\
+Flux (SigLIP) & $s_{flux}=p_{flux}$ & $y_{flux}=\mathbf{1}[p_{flux}\ge\tau_{flux}]$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}
