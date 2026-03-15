@@ -174,11 +174,12 @@ class PytorchDeepFakeRecognizer:
         if not self._checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint file was not found: {self._checkpoint_path}")
 
-        self._torch_device = (
-            torch.device(f"cuda:{self.device}")
-            if self.device >= 0 and torch.cuda.is_available()
-            else torch.device("cpu")
-        )
+        if self.device >= 0 and torch.cuda.is_available():
+            self._torch_device = torch.device(f"cuda:{self.device}")
+        elif torch.backends.mps.is_available():
+            self._torch_device = torch.device("mps")
+        else:
+            self._torch_device = torch.device("cpu")
 
         payload = torch.load(str(self._checkpoint_path), map_location="cpu")
 
@@ -328,11 +329,12 @@ class FluxDetector:
                 "FluxDetector requires torch and a recent transformers build with SigLIP support."
             ) from exc
 
-        self._torch_device = (
-            torch.device(f"cuda:{self.device}")
-            if self.device >= 0 and torch.cuda.is_available()
-            else torch.device("cpu")
-        )
+        if self.device >= 0 and torch.cuda.is_available():
+            self._torch_device = torch.device(f"cuda:{self.device}")
+        elif torch.backends.mps.is_available():
+            self._torch_device = torch.device("mps")
+        else:
+            self._torch_device = torch.device("cpu")
 
         self._processor = AutoImageProcessor.from_pretrained(self.model_name)
         self._model = SiglipForImageClassification.from_pretrained(self.model_name)
