@@ -19,17 +19,12 @@ execute:
 
 ## Проблемът
 
-::: {.kicker}
-Контекст
-:::
 
-::: {.statement}
-В реална среда нямаме време за ръчна проверка на всяка снимка.
-Трябва ни бърз филтър, който в рамките на секунди да сигнализира
-за deepfake, NSFW и синтетично генерирани изображения.
+::: {.columns}
+::: {.column width="100%"}
+![](assets/ai-usage-chart.webp){fig-alt="AI usage chart" width="60%" style="display:block; margin:0 auto;"}
 :::
-
-<span class="tag">Real-time</span><span class="tag">Explainable output</span><span class="tag">Modular models</span>
+:::
 
 ## Какво изградихме
 
