@@ -9,7 +9,6 @@
 <link href="salus_presentation_files/libs/quarto-html/quarto-syntax-highlighting-46f66b053e56abd73bb6e954d61a315b.css" rel="stylesheet" id="quarto-text-highlighting-styles"><meta charset="utf-8">
   <meta name="generator" content="quarto-1.9.35">
 
-  <meta name="author" content="FMI{CODES}">
   <title>SALUS</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -136,14 +135,9 @@
 
 <section id="title-slide" class="quarto-title-block center">
   <h1 class="title">SALUS</h1>
-  <p class="subtitle">AI Content Safety · Хакатон презентация (8 мин)</p>
+  <p class="subtitle">Пазачът на твоята мрежа</p>
 
 <div class="quarto-title-authors">
-<div class="quarto-title-author">
-<div class="quarto-title-author-name">
-FMI{CODES} 
-</div>
-</div>
 </div>
 
 </section>
@@ -151,7 +145,17 @@ FMI{CODES}
 <h2>Проблемът</h2>
 <div class="columns">
 <div class="column" style="width:100%;">
-<p><img data-src="assets/ai-usage-chart.webp" style="display:block; margin:0 auto;;width:60.0%" alt="AI usage chart"></p>
+<p><img data-src="assets/ai-usage-chart.webp" style="display:block; margin:0 auto;;width:90.0%" alt="AI usage chart"></p>
+</div></div>
+</section>
+<section id="рискът-от-ai-съдържание" class="slide level2">
+<h2>Рискът от AI съдържание</h2>
+<div class="columns">
+<div class="column" style="width:100%;">
+<p><img data-src="assets/deepfake_risk_snapshot_2025.png" style="width:100.0%" alt="Deepfake risk snapshot chart"></p>
+<div class="two-column-note">
+<p>Източник: <a href="https://deepstrike.io/blog/deepfake-statistics-2025">DeepStrike, “Deepfake Statistics 2025: AI Fraud Data &amp; Trends”</a>, updated 2025-09-08.</p>
+</div>
 </div></div>
 </section>
 <section id="какво-изградихме" class="slide level2">
@@ -169,33 +173,30 @@ FMI{CODES}
 <li>NSFW</li>
 <li>Flux (SigLIP)</li>
 </ul></li>
-<li>UI за live threat feed + страница „Try It“</li>
 </ul>
-<div class="two-column-note">
-<p>Приоритетът е надежден сигнал и ясна интерпретация, а не „черна кутия“.</p>
-</div>
-</div><div class="column" style="width:45%;">
+</div></div>
+<div class="column" style="width:45%;">
 <div class="cell" data-reveal="true" data-layout-align="default">
 <div class="cell-output-display">
 <div>
 <p></p><figure class=""><p></p>
 <div>
 <pre class="mermaid mermaid-js">flowchart TD
-  A[Upload image] --&gt; B[FastAPI /detect/image]
+  A[Intercepted image response] --&gt; B[Image detection API]
   B --&gt; C[Deepfake model]
   B --&gt; D[NSFW model]
   B --&gt; E[Flux model]
   C --&gt; F[Combined JSON result]
   D --&gt; F
   E --&gt; F
-  F --&gt; G[Dashboard + Threat feed]
+  F --&gt; H[Censored image response]
 </pre>
 </div>
 <p></p></figure><p></p>
 </div>
 </div>
 </div>
-</div></div>
+</div><p>:::</p>
 </section>
 <section id="как-обучихме-deepfake-модела" class="slide level2">
 <h2>Как обучихме Deepfake модела</h2>
@@ -259,18 +260,11 @@ Best F1 (demo sample)
 </div>
 </div></div>
 </section>
-<section id="резултати-и-tuning-на-праг" class="slide level2">
-<h2>Резултати и tuning на праг</h2>
+<section id="резултати" class="slide level2">
+<h2>Резултати</h2>
 <div class="columns">
-<div class="column" style="width:52%;">
-<p><img data-src="assets/threshold_tradeoff.png" style="width:100.0%" alt="Threshold trade-off"></p>
-</div><div class="column" style="width:48%;">
-<p><img data-src="assets/confusion_matrix_best_threshold.png" style="width:100.0%" alt="Confusion matrix при най-добър праг"></p>
-<ul>
-<li>Най-добър <span class="math inline">\(F_1 \approx 0.714\)</span> при <span class="math inline">\(\tau\approx 0.13\)</span> (demo sample).</li>
-<li>Получаваме recall <span class="math inline">\(=1.0\)</span> за AI, но цената е повече false positives.</li>
-<li>За production: прагът се избира по policy (strict vs balanced mode).</li>
-</ul>
+<div class="column" style="width:100%;">
+<p><img data-src="assets/pytorch_confusion_matrix_20000_per_class.png" style="width:100.0%" alt="Confusion matrix при най-добър праг"></p>
 </div></div>
 </section>
 <section id="как-протича-демото-на-живо" class="slide level2 scrollable">
@@ -304,9 +298,9 @@ Best F1 (demo sample)
 </section>
     </div>
   <div class="quarto-auto-generated-content" style="display: none;">
-<p><img src="../salus-web-app/public/logo.png" class="slide-logo"></p>
+<p><img src="../salus-web-app/public/logo2.png" class="slide-logo"></p>
 <div class="footer footer-default">
-<p>SALUS · FMI{CODES}</p>
+<p>Crustacean Republic · FMI{CODES} 2026</p>
 </div>
 </div></div>
 

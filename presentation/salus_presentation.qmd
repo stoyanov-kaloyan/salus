@@ -1,7 +1,7 @@
 ---
 title: "SALUS"
-subtitle: "AI Content Safety · Хакатон презентация (8 мин)"
-author: "FMI{CODES}"
+subtitle: "Пазачът на твоята мрежа"
+# author: "Crustacean Republic"
 lang: bg
 format:
   revealjs:
@@ -11,8 +11,8 @@ format:
     slide-number: true
     transition: fade
     center: false
-    footer: "SALUS · FMI{CODES} 2026"
-    logo: "../salus-web-app/public/logo4.png"
+    footer: "Crustacean Republic · FMI{CODES} 2026"
+    logo: "../salus-web-app/public/logo2.png"
 execute:
   enabled: false
 ---
@@ -22,7 +22,18 @@ execute:
 
 ::: {.columns}
 ::: {.column width="100%"}
-![](assets/ai-usage-chart.webp){fig-alt="AI usage chart" width="60%" style="display:block; margin:0 auto;"}
+![](assets/ai-usage-chart.webp){fig-alt="AI usage chart" width="90%" style="display:block; margin:0 auto;"}
+:::
+:::
+
+## Рискът от AI съдържание
+::: {.columns}
+::: {.column width="100%"}
+![](assets/deepfake_risk_snapshot_2025.png){fig-alt="Deepfake risk snapshot chart" width="100%"}
+
+::: {.two-column-note}
+Източник: [DeepStrike, "Deepfake Statistics 2025: AI Fraud Data & Trends"](https://deepstrike.io/blog/deepfake-statistics-2025), updated 2025-09-08.
+:::
 :::
 :::
 
@@ -39,23 +50,20 @@ execute:
   - Deepfake (ResNet-18)
   - NSFW
   - Flux (SigLIP)
-- UI за live threat feed + страница „Try It“
 
-::: {.two-column-note}
-Приоритетът е надежден сигнал и ясна интерпретация, а не „черна кутия“.
 :::
 :::
 ::: {.column width="45%"}
 ```{mermaid}
 flowchart TD
-  A[Upload image] --> B[FastAPI /detect/image]
+  A[Intercepted image response] --> B[Image detection API]
   B --> C[Deepfake model]
   B --> D[NSFW model]
   B --> E[Flux model]
   C --> F[Combined JSON result]
   D --> F
   E --> F
-  F --> G[Dashboard + Threat feed]
+  F --> H[Censored image response]
 ```
 :::
 :::
@@ -101,18 +109,11 @@ p(y=1\mid x)=\sigma(f_\theta(x)),\qquad
 :::
 :::
 
-## Резултати и tuning на праг
+## Резултати
 
 ::: {.columns}
-::: {.column width="52%"}
-![](assets/threshold_tradeoff.png){fig-alt="Threshold trade-off" width="100%"}
-:::
-::: {.column width="48%"}
-![](assets/confusion_matrix_best_threshold.png){fig-alt="Confusion matrix при най-добър праг" width="100%"}
-
-- Най-добър $F_1 \approx 0.714$ при $\tau\approx 0.13$ (demo sample).
-- Получаваме recall $=1.0$ за AI, но цената е повече false positives.
-- За production: прагът се избира по policy (strict vs balanced mode).
+::: {.column width="100%"}
+![](assets/pytorch_confusion_matrix_20000_per_class.png){fig-alt="Confusion matrix при най-добър праг" width="100%"}
 :::
 :::
 

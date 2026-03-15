@@ -6,6 +6,7 @@ transformers
 numpy
 opencv-python-headless
 matplotlib
+tqdm
 python-multipart
 sklearn
 uvicorn
