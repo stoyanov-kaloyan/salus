@@ -26,37 +26,41 @@ execute:
 :::
 :::
 
-## Рискът от AI съдържание
+## Рискове и вреди
 ::: {.columns}
 ::: {.column width="100%"}
-![](assets/deepfake_risk_snapshot_2025.png){fig-alt="Deepfake risk snapshot chart" width="100%"}
+![](assets/deepfake_risk_snapshot_2025.png){fig-alt="Графика за риска от deepfake" width="100%"}
 
 ::: {.two-column-note}
-Източник: [DeepStrike, "Deepfake Statistics 2025: AI Fraud Data & Trends"](https://deepstrike.io/blog/deepfake-statistics-2025), updated 2025-09-08.
+Източник: [DeepStrike, "Deepfake Statistics 2025: AI Fraud Data & Trends"](https://deepstrike.io/blog/deepfake-statistics-2025), обновено на 2025-09-08.
 :::
 :::
 :::
 
-## Какво изградихме
+## Решение
+::: {.columns}
+::: {.column width="30%"}
+![](assets/before.webp){fig-alt="Преди SALUS" width="100%"}
+:::
+::: {.column width="30%"}
+![](assets/after.webp){fig-alt="След SALUS" width="100%"}
+:::
+::: {.column width="40%"}
+- Засича вредни изображения
+- Заменя ги с цензурирани версии
+- Работи за Deepfakes и NSFW съдържание
+:::
+:::
+
+## Решение 
 
 ::: {.columns}
-::: {.column width="55%"}
-::: {.kicker}
-Решение
+::: {.column width="25%"}
 :::
-
-- Един endpoint: `/detect/image`
-- Три независими модела в паралел:
-  - Deepfake (ResNet-18)
-  - NSFW
-  - Flux (SigLIP)
-
-:::
-:::
-::: {.column width="45%"}
+::: {.column width="75%"}
 ```{mermaid}
 flowchart TD
-  A[Intercepted image response] --> B[Image detection API]
+  A[Response Intercepting Proxy] --> B[Image detection API]
   B --> C[Deepfake model]
   B --> D[NSFW model]
   B --> E[Flux model]
@@ -68,46 +72,14 @@ flowchart TD
 :::
 :::
 
-## Как обучихме Deepfake модела
+## Реализация
+- FastAPI backend с три ML модела (Deepfake, NSFW, Flux)
+- React frontend за демонстрация и dashboard
+- Proxy слой за интеграция в мрежата
 
-::: {.kicker}
-Тренировъчен pipeline
-:::
+Deepfake моделът е обучен от нас върху над 200,000 изображения.
 
-- Данни: Kaggle `muhammadbilal6305/200k-real-vs-ai-visuals-by-mbilal`
-- Stratified split: 80/20 (validation = $20\%$)
-- Backbone: pretrained ResNet-18, бинарен head ($512\rightarrow1$)
-- Loss: BCEWithLogitsLoss + `pos_weight`
-- Optimizer: AdamW, $lr=3\cdot10^{-4}$, weight decay $10^{-4}$
-- Аугментации: RandomResizedCrop, HorizontalFlip, ColorJitter
-- Запазваме checkpoint с най-добър validation $F_1$
-
-\[
-p(y=1\mid x)=\sigma(f_\theta(x)),\qquad
-\mathcal{L}_{\text{BCE}}=-\frac{1}{N}\sum_{i=1}^{N}\left[y_i\log p_i+(1-y_i)\log(1-p_i)\right]
-\]
-
-## Какво показват данните
-
-::: {.metric-grid}
-<div class="metric-card"><div class="metric-title">Оценени изображения</div><div class="metric-value">40</div></div>
-<div class="metric-card"><div class="metric-title">Real</div><div class="metric-value">20</div></div>
-<div class="metric-card"><div class="metric-title">AI</div><div class="metric-value">20</div></div>
-<div class="metric-card"><div class="metric-title">Best F1 (demo sample)</div><div class="metric-value">0.714</div></div>
-:::
-
-::: {.columns}
-::: {.column width="48%"}
-![](assets/class_balance.png){fig-alt="Баланс на класовете" width="100%"}
-:::
-::: {.column width="52%"}
-![](assets/score_distribution.png){fig-alt="Разпределение на score" width="100%"}
-
-::: {.two-column-note}
-Виждаме припокриване около прага 0.5, затова правим tuning според риска.
-:::
-:::
-:::
+Постигаме 92% точност с модел от само 12M параметри.
 
 ## Резултати
 
@@ -117,18 +89,7 @@ p(y=1\mid x)=\sigma(f_\theta(x)),\qquad
 :::
 :::
 
-## Как протича демото на живо
 
-1. Качваме изображение в страницата "Try It".
-2. Пускаме паралелно deepfake + nsfw + flux.
-3. Връщаме структуриран JSON с per-model score и label.
-4. Показваме събитието в dashboard threat feed.
-
-\[
-y_{global}=\max(y_{deepfake},y_{nsfw},y_{flux})
-\]
-
-Всеки анализ се логва с SHA-256 хеш за проследимост и analytics.
 
 ## Roadmap след хакатона
 

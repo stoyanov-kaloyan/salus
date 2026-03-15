@@ -148,41 +148,44 @@
 <p><img data-src="assets/ai-usage-chart.webp" style="display:block; margin:0 auto;;width:90.0%" alt="AI usage chart"></p>
 </div></div>
 </section>
-<section id="рискът-от-ai-съдържание" class="slide level2">
-<h2>Рискът от AI съдържание</h2>
+<section id="рискове-и-вреди" class="slide level2">
+<h2>Рискове и вреди</h2>
 <div class="columns">
 <div class="column" style="width:100%;">
-<p><img data-src="assets/deepfake_risk_snapshot_2025.png" style="width:100.0%" alt="Deepfake risk snapshot chart"></p>
+<p><img data-src="assets/deepfake_risk_snapshot_2025.png" style="width:100.0%" alt="Графика за риска от deepfake"></p>
 <div class="two-column-note">
-<p>Източник: <a href="https://deepstrike.io/blog/deepfake-statistics-2025">DeepStrike, “Deepfake Statistics 2025: AI Fraud Data &amp; Trends”</a>, updated 2025-09-08.</p>
+<p>Източник: <a href="https://deepstrike.io/blog/deepfake-statistics-2025">DeepStrike, “Deepfake Statistics 2025: AI Fraud Data &amp; Trends”</a>, обновено на 2025-09-08.</p>
 </div>
 </div></div>
 </section>
-<section id="какво-изградихме" class="slide level2">
-<h2>Какво изградихме</h2>
+<section id="решение" class="slide level2">
+<h2>Решение</h2>
 <div class="columns">
-<div class="column" style="width:55%;">
-<div class="kicker">
-<p>Решение</p>
-</div>
+<div class="column" style="width:30%;">
+<p><img data-src="assets/before.webp" style="width:100.0%" alt="Преди SALUS"></p>
+</div><div class="column" style="width:30%;">
+<p><img data-src="assets/after.webp" style="width:100.0%" alt="След SALUS"></p>
+</div><div class="column" style="width:40%;">
 <ul>
-<li>Един endpoint: <code>/detect/image</code></li>
-<li>Три независими модела в паралел:
-<ul>
-<li>Deepfake (ResNet-18)</li>
-<li>NSFW</li>
-<li>Flux (SigLIP)</li>
-</ul></li>
+<li>Засича вредни изображения</li>
+<li>Заменя ги с цензурирани версии</li>
+<li>Работи за Deepfakes и NSFW съдържание</li>
 </ul>
 </div></div>
-<div class="column" style="width:45%;">
+</section>
+<section id="решение-1" class="slide level2">
+<h2>Решение</h2>
+<div class="columns">
+<div class="column" style="width:25%;">
+
+</div><div class="column" style="width:75%;">
 <div class="cell" data-reveal="true" data-layout-align="default">
 <div class="cell-output-display">
 <div>
 <p></p><figure class=""><p></p>
 <div>
 <pre class="mermaid mermaid-js">flowchart TD
-  A[Intercepted image response] --&gt; B[Image detection API]
+  A[Response Intercepting Proxy] --&gt; B[Image detection API]
   B --&gt; C[Deepfake model]
   B --&gt; D[NSFW model]
   B --&gt; E[Flux model]
@@ -196,69 +199,17 @@
 </div>
 </div>
 </div>
-</div><p>:::</p>
-</section>
-<section id="как-обучихме-deepfake-модела" class="slide level2">
-<h2>Как обучихме Deepfake модела</h2>
-<div class="kicker">
-<p>Тренировъчен pipeline</p>
-</div>
-<ul>
-<li>Данни: Kaggle <code>muhammadbilal6305/200k-real-vs-ai-visuals-by-mbilal</code></li>
-<li>Stratified split: 80/20 (validation = <span class="math inline">\(20\%\)</span>)</li>
-<li>Backbone: pretrained ResNet-18, бинарен head (<span class="math inline">\(512\rightarrow1\)</span>)</li>
-<li>Loss: BCEWithLogitsLoss + <code>pos_weight</code></li>
-<li>Optimizer: AdamW, <span class="math inline">\(lr=3\cdot10^{-4}\)</span>, weight decay <span class="math inline">\(10^{-4}\)</span></li>
-<li>Аугментации: RandomResizedCrop, HorizontalFlip, ColorJitter</li>
-<li>Запазваме checkpoint с най-добър validation <span class="math inline">\(F_1\)</span></li>
-</ul>
-<p>[ p(y=1x)=(f_(x)), <em>{}=-</em>{i=1}^{N}]</p>
-</section>
-<section id="какво-показват-данните" class="slide level2">
-<h2>Какво показват данните</h2>
-<div class="metric-grid">
-<div class="metric-card">
-<div class="metric-title">
-Оценени изображения
-</div>
-<div class="metric-value">
-40
-</div>
-</div>
-<div class="metric-card">
-<div class="metric-title">
-Real
-</div>
-<div class="metric-value">
-20
-</div>
-</div>
-<div class="metric-card">
-<div class="metric-title">
-AI
-</div>
-<div class="metric-value">
-20
-</div>
-</div>
-<div class="metric-card">
-<div class="metric-title">
-Best F1 (demo sample)
-</div>
-<div class="metric-value">
-0.714
-</div>
-</div>
-</div>
-<div class="columns">
-<div class="column" style="width:48%;">
-<p><img data-src="assets/class_balance.png" style="width:100.0%" alt="Баланс на класовете"></p>
-</div><div class="column" style="width:52%;">
-<p><img data-src="assets/score_distribution.png" style="width:100.0%" alt="Разпределение на score"></p>
-<div class="two-column-note">
-<p>Виждаме припокриване около прага 0.5, затова правим tuning според риска.</p>
-</div>
 </div></div>
+</section>
+<section id="реализация" class="slide level2">
+<h2>Реализация</h2>
+<ul>
+<li>FastAPI backend с три ML модела (Deepfake, NSFW, Flux)</li>
+<li>React frontend за демонстрация и dashboard</li>
+<li>Proxy слой за интеграция в мрежата</li>
+</ul>
+<p>Deepfake моделът е обучен от нас върху над 200,000 изображения.</p>
+<p>Постигаме 92% точност с модел от само 12M параметри.</p>
 </section>
 <section id="резултати" class="slide level2">
 <h2>Резултати</h2>
@@ -266,17 +217,6 @@ Best F1 (demo sample)
 <div class="column" style="width:100%;">
 <p><img data-src="assets/pytorch_confusion_matrix_20000_per_class.png" style="width:100.0%" alt="Confusion matrix при най-добър праг"></p>
 </div></div>
-</section>
-<section id="как-протича-демото-на-живо" class="slide level2 scrollable">
-<h2>Как протича демото на живо</h2>
-<ol type="1">
-<li>Качваме изображение в страницата “Try It”.</li>
-<li>Пускаме паралелно deepfake + nsfw + flux.</li>
-<li>Връщаме структуриран JSON с per-model score и label.</li>
-<li>Показваме събитието в dashboard threat feed.</li>
-</ol>
-<p>[ y_{global}=(y_{deepfake},y_{nsfw},y_{flux}) ]</p>
-<p>Всеки анализ се логва с SHA-256 хеш за проследимост и analytics.</p>
 </section>
 <section id="roadmap-след-хакатона" class="slide level2">
 <h2>Roadmap след хакатона</h2>
