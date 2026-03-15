@@ -35,10 +35,6 @@ class TestDeepFakeRecognizerGpuIntegration(unittest.TestCase):
             raise unittest.SkipTest("Transformers is required for DeepFake integration test.")
 
         import torch
-
-        # if not torch.cuda.is_available():
-        #     raise unittest.SkipTest("CUDA GPU is required for this integration-style test.")
-
         from recognizers import DeepFakeRecognizer
 
         cls.DeepFakeRecognizer = DeepFakeRecognizer
@@ -53,7 +49,6 @@ class TestDeepFakeRecognizerGpuIntegration(unittest.TestCase):
             decision = recognizer.evaluate(image.convert("RGB"))
 
         self.assertIsNotNone(recognizer._pipe)
-        # _assert_pipeline_on_cuda(getattr(recognizer._pipe, "device", None))
 
         self.assertGreater(len(decision.predictions), 0)
         for prediction in decision.predictions:

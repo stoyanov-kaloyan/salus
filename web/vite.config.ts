@@ -12,6 +12,9 @@ export default defineConfig(() => ({
             overlay: false,
         },
     },
+    build: {
+        cssMinify: "esbuild",
+    },
     resolve: {
         alias: {
             "@": path.resolve(__dirname, "./src"),
