@@ -2,12 +2,11 @@
 set -euo pipefail
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Salus — full stack management via docker compose
+# Salus — full stack management
 #
-#   ./salus up      build images + start all services
-#   ./salus down    stop + remove all containers
-#   ./salus logs    follow logs for all services
-#   ./salus build   rebuild images without restarting
+#   ./salus up      start infrastructure (Docker) + run API natively (MPS GPU, blocks terminal)
+#   ./salus down    remove all Docker containers
+#   ./salus build   rebuild Docker images without restarting
 # ──────────────────────────────────────────────────────────────────────────────
 
 CMD="${1:-}"
@@ -22,27 +21,49 @@ case "$CMD" in
     ;;
 
   up)
-    log "Starting all services..."
-    docker compose up -d --build
+    log "Starting infrastructure (db, web, proxy)..."
+    docker compose up -d --build db web proxy
+
+    # Load .env so POSTGRES_PASSWORD and overrides are available.
+    if [[ -f .env ]]; then
+      set -a; source .env; set +a
+    fi
+
+    log "Waiting for database to be ready..."
+    until docker compose exec -T db pg_isready \
+        -U "${POSTGRES_USER:-salus}" \
+        -d "${POSTGRES_DB:-salus}" &>/dev/null; do
+      sleep 1
+    done
+
+    log "Starting API natively (Apple MPS GPU)..."
+    cd api
+    exec env \
+      DATABASE_URL="postgresql://${POSTGRES_USER:-salus}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_HOST_PORT:-5432}/${POSTGRES_DB:-salus}" \
+      DEEPFAKE_DEVICE="${DEEPFAKE_DEVICE:-0}" \
+      FLUX_DEVICE="${FLUX_DEVICE:-0}" \
+      DEEPFAKE_MODEL_BACKEND="${DEEPFAKE_MODEL_BACKEND:-auto}" \
+      DEEPFAKE_PT_CHECKPOINT_PATH="${DEEPFAKE_PT_CHECKPOINT_PATH:-deepfake_resnet18_best.pt}" \
+      DEEPFAKE_THRESHOLD="${DEEPFAKE_THRESHOLD:-0.5}" \
+      FLUX_THRESHOLD="${FLUX_THRESHOLD:-0.5}" \
+      FLUX_MODEL_NAME="${FLUX_MODEL_NAME:-prithivMLmods/OpenSDI-Flux.1-SigLIP2}" \
+      CORS_ALLOW_ORIGINS="${CORS_ALLOW_ORIGINS:-}" \
+      HOST=0.0.0.0 PORT=8000 \
+      uvicorn api:app --host 0.0.0.0 --port 8000
     ;;
 
   down)
-    log "Stopping all services..."
+    log "Stopping Docker services..."
     docker compose down
-    ;;
-
-  logs)
-    docker compose logs -f
     ;;
 
   *)
     err "Unknown command: ${CMD:-<none>}"
     echo ""
     echo "Usage:"
-    echo "  ./salus up      build + start all services"
-    echo "  ./salus down    stop all services"
-    echo "  ./salus logs    follow logs"
-    echo "  ./salus build   rebuild images"
+    echo "  ./salus up      start infrastructure (Docker) + API natively (MPS GPU)"
+    echo "  ./salus down    remove all Docker containers"
+    echo "  ./salus build   rebuild Docker images"
     exit 1
     ;;
 esac

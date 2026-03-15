@@ -7,7 +7,6 @@ networks:
 volumes:
   salus-postgres-data:
   salus-proxy-certs:
-  salus-hf-cache:
 
 services:
   db:
@@ -23,6 +22,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-salus}
       POSTGRES_USER: ${POSTGRES_USER:-salus}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — copy .env.example to .env}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     healthcheck:
       test:
         [
@@ -34,45 +35,8 @@ services:
       retries: 10
       start_period: 10s
 
-  api:
-    platform: linux/arm64
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    networks:
-      - salus-net
-    ports:
-      - "${API_HOST_PORT:-8000}:8000"
-    volumes:
-      - salus-hf-cache:/root/.cache
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-salus}:${POSTGRES_PASSWORD:?}@db:5432/${POSTGRES_DB:-salus}
-      SUPABASE_URL: ""
-      SUPABASE_KEY: ""
-      DEEPFAKE_MODEL_BACKEND: ${DEEPFAKE_MODEL_BACKEND:-auto}
-      DEEPFAKE_PT_CHECKPOINT_PATH: ${DEEPFAKE_PT_CHECKPOINT_PATH:-deepfake_resnet18_best.pt}
-      DEEPFAKE_THRESHOLD: ${DEEPFAKE_THRESHOLD:-0.5}
-      DEEPFAKE_DEVICE: ${DEEPFAKE_DEVICE:--1}
-      FLUX_MODEL_NAME: ${FLUX_MODEL_NAME:-prithivMLmods/OpenSDI-Flux.1-SigLIP2}
-      FLUX_THRESHOLD: ${FLUX_THRESHOLD:-0.5}
-      FLUX_DEVICE: ${FLUX_DEVICE:--1}
-      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
-      HOST: 0.0.0.0
-      PORT: "8000"
-    depends_on:
-      db:
-        condition: service_healthy
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/docs'')"',
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
+  # api runs natively on the host for Apple MPS GPU access.
+  # Start it with: cd api && uvicorn api:app --host 0.0.0.0 --port 8000
 
   web:
     build:
@@ -85,8 +49,6 @@ services:
       - salus-net
     ports:
       - "${WEB_HOST_PORT:-3000}:3000"
-    depends_on:
-      - api
 
   proxy:
     build:
@@ -100,9 +62,6 @@ services:
     volumes:
       - salus-proxy-certs:/certs
     environment:
-      DETECTION_API_URL: http://api:8000
+      DETECTION_API_URL: http://host.docker.internal:8000
       DETECTION_RECOGNIZERS: ${DETECTION_RECOGNIZERS:-deepfake,nsfw}
       MIN_IMAGE_BYTES: ${MIN_IMAGE_BYTES:-10240}
-    depends_on:
-      api:
-        condition: service_healthy
