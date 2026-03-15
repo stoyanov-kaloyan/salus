@@ -155,22 +155,14 @@ def plot_confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray, out_path: Path
 
 def plot_deepstrike_risk_snapshot(out_path: Path) -> None:
     growth_labels = [
-        "Fraud attempts",
-        "North America fraud growth",
-        "APAC fraud growth",
-        "IDV bypass attacks",
+        "Опити за измами",
+        "Ръст в Северна Америка",
+        "Ръст в Азия и Тихоокеанския регион",
+        "Атаки срещу онлайн верификация на самоличност",
     ]
     growth_values = np.array([3000.0, 1740.0, 1530.0, 704.0], dtype=np.float32)
 
-    context_labels = [
-        "NCII share of deepfakes",
-        "Crypto share of detected fraud",
-        "Human detection (video)",
-    ]
-    context_values = np.array([97.0, 88.0, 24.5], dtype=np.float32)
-
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.1), gridspec_kw={"width_ratios": [1.25, 1.0]})
-    ax_growth, ax_context = axes
+    fig, ax_growth = plt.subplots(figsize=(9.8, 4.3))
 
     y_growth = np.arange(len(growth_labels))
     growth_bars = ax_growth.barh(
@@ -183,8 +175,8 @@ def plot_deepstrike_risk_snapshot(out_path: Path) -> None:
     ax_growth.set_yticks(y_growth, labels=growth_labels)
     ax_growth.invert_yaxis()
     ax_growth.set_xlim(0, float(np.max(growth_values) * 1.27))
-    ax_growth.set_xlabel("Growth (%)")
-    ax_growth.set_title("Attack growth indicators")
+    ax_growth.set_xlabel("Ръст (%)")
+    ax_growth.set_title("Индикатори за ръст на атаките")
     ax_growth.grid(axis="x", alpha=0.22)
 
     growth_max = float(np.max(growth_values))
@@ -198,36 +190,11 @@ def plot_deepstrike_risk_snapshot(out_path: Path) -> None:
             weight="bold",
         )
 
-    y_context = np.arange(len(context_labels))
-    context_bars = ax_context.barh(
-        y_context,
-        context_values,
-        color=["#C1121F", "#D97706", "#3B6EA5"],
-        edgecolor="#1B1B1B",
-        linewidth=0.8,
-    )
-    ax_context.set_yticks(y_context, labels=context_labels)
-    ax_context.invert_yaxis()
-    ax_context.set_xlim(0, 100)
-    ax_context.set_xlabel("Share / accuracy (%)")
-    ax_context.set_title("Exposure and detection limits")
-    ax_context.grid(axis="x", alpha=0.22)
-
-    for bar, value in zip(context_bars, context_values):
-        ax_context.text(
-            bar.get_width() + 1.5,
-            bar.get_y() + bar.get_height() / 2,
-            f"{value:.1f}%",
-            va="center",
-            fontsize=9,
-            weight="bold",
-        )
-
-    fig.suptitle("Deepfake Risk Snapshot (2025)", fontsize=14, weight="bold")
+    fig.suptitle("Снимка на риска от Deepfake (2025)", fontsize=14, weight="bold")
     fig.text(
         0.01,
         0.005,
-        "Source: DeepStrike - Deepfake Statistics 2025 (deepstrike.io/blog/deepfake-statistics-2025)",
+        "Източник: DeepStrike - Deepfake Statistics 2025 (deepstrike.io/blog/deepfake-statistics-2025)",
         fontsize=8,
         color="#4A4A4A",
     )
@@ -292,32 +259,10 @@ def main() -> None:
     out_dir = root / "presentation" / "assets"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    y_true, scores, y_pred = load_predictions(csv_path)
 
-    metrics_default = compute_metrics(y_true, y_pred)
-    threshold_info = plot_threshold_curves(y_true, scores, out_dir / "threshold_tradeoff.png")
-    y_pred_best = (scores >= threshold_info["best_threshold"]).astype(np.int32)
-    metrics_best = compute_metrics(y_true, y_pred_best)
-
-    plot_class_balance(y_true, out_dir / "class_balance.png")
-    plot_score_distribution(y_true, scores, out_dir / "score_distribution.png")
-    plot_confusion_matrix(y_true, y_pred, out_dir / "confusion_matrix.png")
-    plot_confusion_matrix(y_true, y_pred_best, out_dir / "confusion_matrix_best_threshold.png")
     plot_deepstrike_risk_snapshot(out_dir / "deepfake_risk_snapshot_2025.png")
 
-    summary = {
-        "sample_count": int(y_true.size),
-        "real_count": int(np.sum(y_true == 0)),
-        "ai_count": int(np.sum(y_true == 1)),
-        "metrics_current_threshold": metrics_default,
-        "metrics_best_threshold": metrics_best,
-        "threshold_sweep": threshold_info,
-    }
-
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
     print("Generated charts in:", out_dir)
-    print(json.dumps(summary, indent=2))
 
 
 if __name__ == "__main__":
